@@ -200,16 +200,16 @@ impl<H: Hasher> TrieRecorderProvider<H> for UnimplementedRecorderProvider<H> {
 }
 
 #[cfg(feature = "std")]
-type DefaultCache<H> = LocalTrieCache<H>;
+pub(super) type DefaultCache<H> = LocalTrieCache<H>;
 
 #[cfg(not(feature = "std"))]
-type DefaultCache<H> = UnimplementedCacheProvider<H>;
+pub(super) type DefaultCache<H> = UnimplementedCacheProvider<H>;
 
 #[cfg(feature = "std")]
-type DefaultRecorder<H> = sp_trie::recorder::Recorder<H>;
+pub(super) type DefaultRecorder<H> = sp_trie::recorder::Recorder<H>;
 
 #[cfg(not(feature = "std"))]
-type DefaultRecorder<H> = UnimplementedRecorderProvider<H>;
+pub(super) type DefaultRecorder<H> = UnimplementedRecorderProvider<H>;
 
 /// Builder for creating a [`TrieBackend`].
 pub struct TrieBackendBuilder<

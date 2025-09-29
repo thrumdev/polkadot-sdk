@@ -34,6 +34,7 @@ mod in_memory_backend;
 pub(crate) mod overlayed_changes;
 #[cfg(not(substrate_runtime))]
 mod read_only;
+pub mod state_backend;
 mod stats;
 #[cfg(feature = "std")]
 mod testing;

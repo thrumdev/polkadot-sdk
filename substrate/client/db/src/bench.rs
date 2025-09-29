@@ -197,9 +197,9 @@ impl<Hasher: Hash> BenchmarkingState<Hasher> {
 		}
 		let storage_db = Arc::new(StorageDb::<Hasher> { db, _phantom: Default::default() });
 		*self.state.borrow_mut() = Some(
-			DbStateBuilder::<Hasher>::new(storage_db, self.root.get())
-				.with_optional_recorder(self.proof_recorder.clone())
-				.with_cache(self.shared_trie_cache.local_cache_trusted())
+			DbStateBuilder::<Hasher>::new_trie(storage_db, self.root.get())
+				.with_trie_optional_recorder(self.proof_recorder.clone())
+				.with_trie_cache(self.shared_trie_cache.local_cache_trusted())
 				.build(),
 		);
 		Ok(())

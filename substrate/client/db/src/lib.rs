@@ -88,7 +88,7 @@ use sp_runtime::{
 };
 use sp_state_machine::{
 	backend::{AsTrieBackend, Backend as StateBackend},
-	BackendTransaction, ChildStorageCollection, DBValue, IndexOperation, IterArgs,
+	state_backend, BackendTransaction, ChildStorageCollection, DBValue, IndexOperation, IterArgs,
 	OffchainChangesCollection, StateMachineStats, StorageCollection, StorageIterator, StorageKey,
 	StorageValue, UsageInfo as StateUsageInfo,
 };
@@ -104,11 +104,11 @@ pub use bench::BenchmarkingState;
 const CACHE_HEADERS: usize = 8;
 
 /// DB-backed patricia trie state, transaction type is an overlay of changes to commit.
-pub type DbState<H> = sp_state_machine::TrieBackend<Arc<dyn sp_state_machine::Storage<H>>, H>;
+pub type DbState<H> = state_backend::StateBackend<Arc<dyn sp_state_machine::Storage<H>>, H>;
 
 /// Builder for [`DbState`].
 pub type DbStateBuilder<Hasher> =
-	sp_state_machine::TrieBackendBuilder<Arc<dyn sp_state_machine::Storage<Hasher>>, Hasher>;
+	state_backend::StateBackendBuilder<Arc<dyn sp_state_machine::Storage<Hasher>>, Hasher>;
 
 /// Length of a [`DbHash`].
 const DB_HASH_LEN: usize = 32;
@@ -2006,9 +2006,12 @@ impl<Block: BlockT> Backend<Block> {
 
 	fn empty_state(&self) -> RecordStatsState<RefTrackingState<Block>, Block> {
 		let root = EmptyStorage::<Block>::new().0; // Empty trie
-		let db_state = DbStateBuilder::<HashingFor<Block>>::new(self.storage.clone(), root)
-			.with_optional_cache(self.shared_trie_cache.as_ref().map(|c| c.local_cache_untrusted()))
+		let db_state = DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
+			.with_trie_optional_cache(
+				self.shared_trie_cache.as_ref().map(|c| c.local_cache_untrusted()),
+			)
 			.build();
+
 		let state = RefTrackingState::new(db_state, self.storage.clone(), None);
 		RecordStatsState::new(state, None, self.state_usage.clone())
 	}
@@ -2529,8 +2532,8 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 			if let Some(genesis_state) = &*self.genesis_state.read() {
 				let root = genesis_state.root;
 				let db_state =
-					DbStateBuilder::<HashingFor<Block>>::new(genesis_state.clone(), root)
-						.with_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
+					DbStateBuilder::<HashingFor<Block>>::new_trie(genesis_state.clone(), root)
+						.with_trie_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
 							if matches!(trie_cache_context, TrieCacheContext::Trusted) {
 								c.local_cache_trusted()
 							} else {
@@ -2557,8 +2560,8 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 				{
 					let root = hdr.state_root;
 					let db_state =
-						DbStateBuilder::<HashingFor<Block>>::new(self.storage.clone(), root)
-							.with_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
+						DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
+							.with_trie_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
 								if matches!(trie_cache_context, TrieCacheContext::Trusted) {
 									c.local_cache_trusted()
 								} else {
