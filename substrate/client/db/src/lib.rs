@@ -367,6 +367,14 @@ pub enum DatabaseSource {
 		path: PathBuf,
 	},
 
+	/// Load a Nomt database from a given path.
+	Nomt {
+		/// Path to the state database.
+		nomt_path: PathBuf,
+		/// Path to the database.
+		paritydb_path: PathBuf,
+	},
+
 	/// Use a custom already-open database.
 	Custom {
 		/// the handle to the custom storage
@@ -389,6 +397,8 @@ impl DatabaseSource {
 			#[cfg(feature = "rocksdb")]
 			DatabaseSource::RocksDb { path, .. } => Some(path),
 			DatabaseSource::ParityDb { path } => Some(path),
+			DatabaseSource::Nomt { nomt_path, .. } =>
+				Some(nomt_path.parent().expect("Nomt path cannot be root path")),
 			DatabaseSource::Custom { .. } => None,
 		}
 	}
@@ -409,6 +419,12 @@ impl DatabaseSource {
 				*path = p.into();
 				true
 			},
+			DatabaseSource::Nomt { nomt_path, paritydb_path } => {
+				let base_path: PathBuf = p.into();
+				*nomt_path = base_path.join("nomt");
+				*paritydb_path = base_path.join("paritydb");
+				true
+			},
 			DatabaseSource::Custom { .. } => false,
 		}
 	}
@@ -421,6 +437,7 @@ impl std::fmt::Display for DatabaseSource {
 			#[cfg(feature = "rocksdb")]
 			DatabaseSource::RocksDb { .. } => "RocksDb",
 			DatabaseSource::ParityDb { .. } => "ParityDb",
+			DatabaseSource::Nomt { .. } => "Nomt",
 			DatabaseSource::Custom { .. } => "Custom",
 		};
 		write!(f, "{}", name)
@@ -1002,6 +1019,8 @@ impl<Block: BlockT> sc_client_api::backend::BlockImportOperation<Block>
 struct StorageDb<Block: BlockT> {
 	pub db: Arc<dyn Database<DbHash>>,
 	pub state_db: StateDb<Block::Hash, Vec<u8>, StateMetaDb>,
+	pub nomt_db: Option<()>,
+	pub nomt_state_db: Option<()>,
 	prefix_keys: bool,
 }
 
@@ -1130,7 +1149,7 @@ impl<Block: BlockT> Backend<Block> {
 
 		let db_source = &db_config.source;
 
-		let (needs_init, db) =
+		let (needs_init, open_dbs) =
 			match crate::utils::open_database::<Block>(db_source, DatabaseType::Full, false) {
 				Ok(db) => (false, db),
 				Err(OpenDbError::DoesNotExist) => {
@@ -1141,7 +1160,7 @@ impl<Block: BlockT> Backend<Block> {
 				Err(as_is) => return Err(as_is.into()),
 			};
 
-		Self::from_database(db as Arc<_>, canonicalization_delay, &db_config, needs_init)
+		Self::from_database(open_dbs, canonicalization_delay, &db_config, needs_init)
 	}
 
 	/// Reset the shared trie cache.
@@ -1209,21 +1228,22 @@ impl<Block: BlockT> Backend<Block> {
 	}
 
 	fn from_database(
-		db: Arc<dyn Database<DbHash>>,
+		open_dbs: crate::utils::OpenDb,
 		canonicalization_delay: u64,
 		config: &DatabaseSettings,
 		should_init: bool,
 	) -> ClientResult<Self> {
+		let (kvdb, nomt_db) = open_dbs.raw_dbs();
 		let mut db_init_transaction = Transaction::new();
 
 		let requested_state_pruning = config.state_pruning.clone();
-		let state_meta_db = StateMetaDb(db.clone());
+		let state_meta_db = StateMetaDb(kvdb.clone());
 		let map_e = sp_blockchain::Error::from_state_db;
 
 		let (state_db_init_commit_set, state_db) = StateDb::open(
 			state_meta_db,
 			requested_state_pruning,
-			!db.supports_ref_counting(),
+			!kvdb.supports_ref_counting(),
 			should_init,
 		)
 		.map_err(map_e)?;
@@ -1232,12 +1252,18 @@ impl<Block: BlockT> Backend<Block> {
 
 		let state_pruning_used = state_db.pruning_mode();
 		let is_archive_pruning = state_pruning_used.is_archive();
-		let blockchain = BlockchainDb::new(db.clone())?;
+		let blockchain = BlockchainDb::new(kvdb.clone())?;
 
-		let storage_db =
-			StorageDb { db: db.clone(), state_db, prefix_keys: !db.supports_ref_counting() };
+		let nomt_state_db = if nomt_db.is_some() { Some(()) } else { None };
+		let storage_db = StorageDb {
+			db: kvdb.clone(),
+			state_db,
+			nomt_db: nomt_db.clone(),
+			nomt_state_db,
+			prefix_keys: !kvdb.supports_ref_counting(),
+		};
 
-		let offchain_storage = offchain::LocalStorage::new(db.clone());
+		let offchain_storage = offchain::LocalStorage::new(kvdb.clone());
 
 		let shared_trie_cache = config.trie_cache_maximum_size.map(|maximum_size| {
 			let system_memory = sysinfo::System::new_all();
@@ -1287,7 +1313,7 @@ impl<Block: BlockT> Backend<Block> {
 			});
 		}
 
-		db.commit(db_init_transaction)?;
+		kvdb.commit(db_init_transaction)?;
 
 		Ok(backend)
 	}

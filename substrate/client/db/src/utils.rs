@@ -185,7 +185,7 @@ pub fn open_database<Block: BlockT>(
 	db_source: &DatabaseSource,
 	db_type: DatabaseType,
 	create: bool,
-) -> OpenDbResult {
+) -> Result<OpenDb, OpenDbError> {
 	// Maybe migrate (copy) the database to a type specific subdirectory to make it
 	// possible that light and full databases coexist
 	// NOTE: This function can be removed in a few releases
@@ -198,31 +198,40 @@ fn open_database_at<Block: BlockT>(
 	db_source: &DatabaseSource,
 	db_type: DatabaseType,
 	create: bool,
-) -> OpenDbResult {
-	let db: Arc<dyn Database<DbHash>> = match &db_source {
-		DatabaseSource::ParityDb { path } => open_parity_db::<Block>(path, db_type, create)?,
+) -> Result<OpenDb, OpenDbError> {
+	let opened_dbs = match &db_source {
+		// NOMT will contiune to use ParityDb to handle everything that is not within the STATE.
+		DatabaseSource::Nomt { paritydb_path, nomt_path: _nomt_path } => {
+			let parity_db = open_parity_db::<Block>(paritydb_path, db_type, create)?;
+			let nomt_db = (); // TODO: open nomt here!
+			OpenDb::NOMT(parity_db, nomt_db)
+		},
+		DatabaseSource::ParityDb { path } =>
+			open_parity_db::<Block>(path, db_type, create).map(|db| OpenDb::KVDB(db))?,
 		#[cfg(feature = "rocksdb")]
 		DatabaseSource::RocksDb { path, cache_size } =>
-			open_kvdb_rocksdb::<Block>(path, db_type, create, *cache_size)?,
+			open_kvdb_rocksdb::<Block>(path, db_type, create, *cache_size)
+				.map(|db| OpenDb::KVDB(db))?,
 		DatabaseSource::Custom { db, require_create_flag } => {
 			if *require_create_flag && !create {
 				return Err(OpenDbError::DoesNotExist);
 			}
-			db.clone()
+			OpenDb::KVDB(db.clone())
 		},
 		DatabaseSource::Auto { paritydb_path, rocksdb_path, cache_size } => {
 			// check if rocksdb exists first, if not, open paritydb
 			match open_kvdb_rocksdb::<Block>(rocksdb_path, db_type, false, *cache_size) {
-				Ok(db) => db,
+				Ok(db) => OpenDb::KVDB(db),
 				Err(OpenDbError::NotEnabled(_)) | Err(OpenDbError::DoesNotExist) =>
-					open_parity_db::<Block>(paritydb_path, db_type, create)?,
+					open_parity_db::<Block>(paritydb_path, db_type, create)
+						.map(|db| OpenDb::KVDB(db))?,
 				Err(as_is) => return Err(as_is),
 			}
 		},
 	};
 
-	check_database_type(&*db, db_type)?;
-	Ok(db)
+	check_database_type(&*opened_dbs.kvdb(), db_type)?;
+	Ok(opened_dbs)
 }
 
 #[derive(Debug)]
@@ -240,6 +249,28 @@ pub enum OpenDbError {
 }
 
 type OpenDbResult = Result<Arc<dyn Database<DbHash>>, OpenDbError>;
+
+pub enum OpenDb {
+	KVDB(Arc<dyn Database<DbHash>>),
+	// TODO: update with nomt instance
+	NOMT(Arc<dyn Database<DbHash>>, ()),
+}
+
+impl OpenDb {
+	pub fn raw_dbs(self) -> (Arc<dyn Database<DbHash>>, Option<()>) {
+		match self {
+			OpenDb::KVDB(kvdb) => (kvdb, None),
+			OpenDb::NOMT(kvdb, nomt) => (kvdb, Some(nomt)),
+		}
+	}
+
+	pub fn kvdb(&self) -> Arc<dyn Database<DbHash>> {
+		match self {
+			OpenDb::KVDB(kvdb) => kvdb.clone(),
+			OpenDb::NOMT(kvdb, ..) => kvdb.clone(),
+		}
+	}
+}
 
 impl fmt::Display for OpenDbError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

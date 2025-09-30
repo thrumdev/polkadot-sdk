@@ -244,6 +244,8 @@ pub enum Database {
 	RocksDb,
 	/// ParityDb. <https://github.com/paritytech/parity-db/>
 	ParityDb,
+	/// Nomt.
+	Nomt,
 	/// Detect whether there is an existing database. Use it, if there is, if not, create new
 	/// instance of ParityDb
 	Auto,
@@ -256,6 +258,7 @@ impl Database {
 	/// Returns all the variants of this enum to be shown in the cli.
 	pub const fn variants() -> &'static [&'static str] {
 		&[
+			"nomt",
 			#[cfg(feature = "rocksdb")]
 			"rocksdb",
 			"paritydb",
