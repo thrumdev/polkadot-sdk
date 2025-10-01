@@ -19,7 +19,7 @@
 //! from storage.
 
 use crate::{
-	backend::{IterArgs, StorageIterator},
+	backend::{BackendTransaction, IterArgs, StorageIterator},
 	trie_backend::TrieCacheProvider,
 	warn, StorageKey, StorageValue,
 };
@@ -630,7 +630,7 @@ where
 		&self,
 		delta: impl Iterator<Item = (&'a [u8], Option<&'a [u8]>)>,
 		state_version: StateVersion,
-	) -> (H::Out, PrefixedMemoryDB<H>) {
+	) -> (H::Out, BackendTransaction<H>) {
 		let mut write_overlay = PrefixedMemoryDB::with_hasher(RandomState::default());
 
 		let root = self.with_recorder_and_cache_for_storage_root(None, |recorder, cache| {
@@ -653,7 +653,7 @@ where
 			}
 		});
 
-		(root, write_overlay)
+		(root, BackendTransaction::new_trie_transaction(write_overlay))
 	}
 
 	/// Returns the child storage root for the child trie `child_info` after applying the given
@@ -663,7 +663,7 @@ where
 		child_info: &ChildInfo,
 		delta: impl Iterator<Item = (&'a [u8], Option<&'a [u8]>)>,
 		state_version: StateVersion,
-	) -> (H::Out, bool, PrefixedMemoryDB<H>) {
+	) -> (H::Out, bool, BackendTransaction<H>) {
 		let default_root = match child_info.child_type() {
 			ChildType::ParentKeyId => empty_child_trie_root::<sp_trie::LayoutV1<H>>(),
 		};
@@ -710,7 +710,7 @@ where
 
 		let is_default = new_child_root == default_root;
 
-		(new_child_root, is_default, write_overlay)
+		(new_child_root, is_default, BackendTransaction::new_trie_transaction(write_overlay))
 	}
 }
 

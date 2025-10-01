@@ -172,7 +172,8 @@ impl<Hasher: Hash> BenchmarkingState<Hasher> {
 				child_delta,
 				state_version,
 			);
-		state.genesis = transaction.clone().drain();
+		// NOTE: Currently, NOMT is not used in benchmarks.
+		state.genesis = transaction.clone().trie_transaction().drain();
 		state.genesis_root = root;
 		state.commit(root, transaction, Vec::new(), Vec::new())?;
 		state.record.take();
@@ -488,7 +489,8 @@ impl<Hasher: Hash> StateBackend<Hasher> for BenchmarkingState<Hasher> {
 	) -> Result<(), Self::Error> {
 		if let Some(db) = self.db.take() {
 			let mut db_transaction = DBTransaction::new();
-			let changes = transaction.drain();
+			// NOTE: Currently, NOMT is not used in benchmarks.
+			let changes = transaction.trie_transaction().drain();
 			let mut keys = Vec::with_capacity(changes.len());
 			for (key, (val, rc)) in changes {
 				if rc > 0 {

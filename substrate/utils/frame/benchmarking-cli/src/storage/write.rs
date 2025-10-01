@@ -287,12 +287,14 @@ impl StorageCmd {
 			None => trie.storage_root(replace.iter().cloned(), version).1,
 		};
 		// Only the keep the insertions, since we do not want to benchmark pruning.
-		let tx = convert_tx::<Block>(db.clone(), stx.clone(), false, col);
+		// NOTE: NOMT is not yet used within benchmarks.
+		let tx = convert_tx::<Block>(db.clone(), stx.clone().trie_transaction(), false, col);
 		db.commit(tx).map_err(|e| format!("Writing to the Database: {}", e))?;
 		let result = (average_len, start.elapsed() / batch_size as u32);
 
 		// Now undo the changes by removing what was added.
-		let tx = convert_tx::<Block>(db.clone(), stx.clone(), true, col);
+		// NOTE: NOMT is not yet used within benchmarks.
+		let tx = convert_tx::<Block>(db.clone(), stx.clone().trie_transaction(), true, col);
 		db.commit(tx).map_err(|e| format!("Writing to the Database: {}", e))?;
 
 		Ok(result)
@@ -423,7 +425,9 @@ fn check_new_value<Block: BlockT>(
 		Some(info) => trie.child_storage_root(info, new_kv.iter().cloned(), version).2,
 		None => trie.storage_root(new_kv.iter().cloned(), version).1,
 	};
-	for (mut k, (_, rc)) in stx.drain().into_iter() {
+
+	// NOTE: NOMT is not yet used within benchmarks.
+	for (mut k, (_, rc)) in stx.trie_transaction().drain().into_iter() {
 		if rc > 0 {
 			db.sanitize_key(&mut k);
 			if db.get(col, &k).is_some() {

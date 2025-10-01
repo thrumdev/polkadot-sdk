@@ -34,6 +34,7 @@ use std::collections::HashMap as MapType;
 use alloc::collections::BTreeMap as MapType;
 
 /// Create a new empty instance of in-memory backend.
+// TODO: probably an in memory NOMT version will be needed.
 pub fn new_in_mem<H>() -> TrieBackend<PrefixedMemoryDB<H>, H>
 where
 	H: Hasher,
@@ -77,7 +78,7 @@ where
 			state_version,
 		);
 
-		self.apply_transaction(root, transaction);
+		self.apply_transaction(root, transaction.trie_transaction());
 	}
 
 	/// Merge trie nodes into this backend.

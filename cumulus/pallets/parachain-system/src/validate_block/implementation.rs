@@ -281,15 +281,19 @@ where
 			drop(backend);
 
 			// We just forward the changes directly to our db.
-			changes.transaction.drain().into_iter().for_each(|(_, (value, count))| {
-				// We only care about inserts and not deletes.
-				if count > 0 {
-					db.insert(EMPTY_PREFIX, &value);
+			// NOTE: This is just to make things compile,
+			// should not be used by a substrate solo chain.
+			changes.transaction.trie_transaction().drain().into_iter().for_each(
+				|(_, (value, count))| {
+					// We only care about inserts and not deletes.
+					if count > 0 {
+						db.insert(EMPTY_PREFIX, &value);
 
-					let hash = HashingFor::<B>::hash(&value);
-					seen_nodes.borrow_mut().insert(hash);
-				}
-			});
+						let hash = HashingFor::<B>::hash(&value);
+						seen_nodes.borrow_mut().insert(hash);
+					}
+				},
+			);
 		}
 	}
 

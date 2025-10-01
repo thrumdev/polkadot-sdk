@@ -846,7 +846,7 @@ impl<Block: BlockT> HeaderMetadata<Block> for BlockchainDb<Block> {
 /// Database transaction
 pub struct BlockImportOperation<Block: BlockT> {
 	old_state: RecordStatsState<RefTrackingState<Block>, Block>,
-	db_updates: PrefixedMemoryDB<HashingFor<Block>>,
+	db_updates: BackendTransaction<HashingFor<Block>>,
 	storage_updates: StorageCollection,
 	child_storage_updates: ChildStorageCollection,
 	offchain_storage_updates: OffchainChangesCollection,
@@ -938,7 +938,7 @@ impl<Block: BlockT> sc_client_api::backend::BlockImportOperation<Block>
 
 	fn update_db_storage(
 		&mut self,
-		update: PrefixedMemoryDB<HashingFor<Block>>,
+		update: BackendTransaction<HashingFor<Block>>,
 	) -> ClientResult<()> {
 		self.db_updates = update;
 		Ok(())
@@ -1047,18 +1047,17 @@ impl<Block: BlockT> sc_state_db::NodeDb for StorageDb<Block> {
 
 struct DbGenesisStorage<Block: BlockT> {
 	root: Block::Hash,
-	storage: PrefixedMemoryDB<HashingFor<Block>>,
+	storage: BackendTransaction<HashingFor<Block>>,
 }
 
 impl<Block: BlockT> DbGenesisStorage<Block> {
-	pub fn new(root: Block::Hash, storage: PrefixedMemoryDB<HashingFor<Block>>) -> Self {
+	pub fn new(root: Block::Hash, storage: BackendTransaction<HashingFor<Block>>) -> Self {
 		DbGenesisStorage { root, storage }
 	}
 }
 
 impl<Block: BlockT> sp_state_machine::Storage<HashingFor<Block>> for DbGenesisStorage<Block> {
 	fn get(&self, key: &Block::Hash, prefix: Prefix) -> Result<Option<DBValue>, String> {
-		use hash_db::HashDB;
 		Ok(self.storage.get(key, prefix))
 	}
 }
@@ -1598,7 +1597,8 @@ impl<Block: BlockT> Backend<Block> {
 				let mut bytes: u64 = 0;
 				let mut removal: u64 = 0;
 				let mut bytes_removal: u64 = 0;
-				for (mut key, (val, rc)) in operation.db_updates.drain() {
+				// TODO: Accept only trie transactions until nomt is properly introduced.
+				for (mut key, (val, rc)) in operation.db_updates.trie_transaction().drain() {
 					self.storage.db.sanitize_key(&mut key);
 					if rc > 0 {
 						ops += 1;
@@ -2168,7 +2168,7 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 		Ok(BlockImportOperation {
 			pending_block: None,
 			old_state: self.empty_state(),
-			db_updates: PrefixedMemoryDB::default(),
+			db_updates: Default::default(),
 			storage_updates: Default::default(),
 			child_storage_updates: Default::default(),
 			offchain_storage_updates: Default::default(),
@@ -2209,6 +2209,7 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 			self.blockchain.clear_pinning_cache();
 			Err(e)
 		} else {
+			// NOTE: Nomt state db is not being introduced yet.
 			self.storage.state_db.sync();
 			Ok(())
 		}

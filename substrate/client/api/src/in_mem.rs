@@ -592,6 +592,7 @@ impl<Block: BlockT> backend::BlockImportOperation<Block> for BlockImportOperatio
 ///
 /// > **Warning**: Doesn't support all the features necessary for a proper database. Only use this
 /// > struct for testing purposes. Do **NOT** use in production.
+// NOTE: Nomt will not be introduced in this testing utility yet.
 pub struct Backend<Block: BlockT> {
 	states: RwLock<HashMap<Block::Hash, InMemoryBackend<HashingFor<Block>>>>,
 	blockchain: Blockchain<Block>,
@@ -686,7 +687,8 @@ impl<Block: BlockT> backend::Backend<Block> for Backend<Block> {
 			let hash = header.hash();
 
 			let new_state = match operation.new_state {
-				Some(state) => old_state.update_backend(*header.state_root(), state),
+				Some(state) =>
+					old_state.update_backend(*header.state_root(), state.trie_transaction()),
 				None => old_state.clone(),
 			};
 

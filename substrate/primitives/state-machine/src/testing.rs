@@ -235,8 +235,11 @@ where
 	pub fn commit_all(&mut self) -> Result<(), String> {
 		let changes = self.overlay.drain_storage_changes(&self.backend, self.state_version)?;
 
-		self.backend
-			.apply_transaction(changes.transaction_storage_root, changes.transaction);
+		// NOTE: Currently, NOMT is not used in tests.
+		self.backend.apply_transaction(
+			changes.transaction_storage_root,
+			changes.transaction.trie_transaction(),
+		);
 		Ok(())
 	}
 

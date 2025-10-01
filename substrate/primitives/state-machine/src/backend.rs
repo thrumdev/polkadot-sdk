@@ -169,11 +169,131 @@ where
 	}
 }
 
+/// Trie Backend Transaction type.
+pub type TrieBackendTransaction<H> = PrefixedMemoryDB<H>;
+
+/// Nomt Backend Transaction type.
+pub type NomtBackendTransaction = ();
+
 /// The transaction type used by [`Backend`].
 ///
 /// This transaction contains all the changes that need to be applied to the backend to create the
 /// state for a new block.
-pub type BackendTransaction<H> = PrefixedMemoryDB<H>;
+pub enum InnerBackendTransaction<H>
+where
+	H: Hasher,
+{
+	Trie(TrieBackendTransaction<H>),
+	Nomt(),
+}
+
+pub struct BackendTransaction<H: Hasher> {
+	inner: Option<InnerBackendTransaction<H>>,
+}
+
+impl<H: Hasher> core::clone::Clone for BackendTransaction<H> {
+	fn clone(&self) -> Self {
+		Self { inner: self.inner.clone() }
+	}
+}
+
+impl<H: Hasher> core::clone::Clone for InnerBackendTransaction<H> {
+	fn clone(&self) -> Self {
+		match self {
+			InnerBackendTransaction::Trie(trie_transaction) =>
+				InnerBackendTransaction::Trie(trie_transaction.clone()),
+			InnerBackendTransaction::Nomt() => InnerBackendTransaction::Nomt(),
+		}
+	}
+}
+
+impl<H: Hasher> BackendTransaction<H> {
+	/// Creates a BackendTransaction from a TrieBackendTransaction.
+	pub fn new_trie_transaction(trie_transaction: TrieBackendTransaction<H>) -> Self {
+		Self { inner: Some(InnerBackendTransaction::Trie(trie_transaction)) }
+	}
+
+	/// Creates a BackendTransaction from a NomtBackendTransaction.
+	pub fn new_nomt_transaction(_nomt_transaction: NomtBackendTransaction) -> Self {
+		Self { inner: Some(InnerBackendTransaction::Nomt()) }
+	}
+
+	/// Regardless of the previous state of the BackendTransaction
+	/// update it with the provided TrieBackendTransaction.
+	pub fn set_trie_transaction(&mut self, trie_transaction: TrieBackendTransaction<H>) {
+		self.inner = Some(InnerBackendTransaction::Trie(trie_transaction));
+	}
+
+	/// Regardless of the previous state of the BackendTransaction
+	/// update it with the provided NomtBackendTransaction.
+	pub fn set_nomt_transaction(&mut self, _nomt_transaction: NomtBackendTransaction) {
+		self.inner = Some(InnerBackendTransaction::Nomt());
+	}
+
+	/// Extract the TrieBackendTransaction from the BackendTransaction.
+	pub fn trie_transaction(self) -> TrieBackendTransaction<H> {
+		match self.inner {
+			Some(InnerBackendTransaction::Trie(trie_transaction)) => trie_transaction,
+			_ => unreachable!(),
+		}
+	}
+
+	/// Extract the TrieBackendTransaction from the NomtBackendTransaction.
+	pub fn nomt_transaction(self) -> NomtBackendTransaction {
+		match self.inner {
+			Some(InnerBackendTransaction::Nomt()) => (),
+			_ => unreachable!(),
+		}
+	}
+
+	/// Consolidate the current BackendTransaction initizling it with the provided one
+	/// or join them, expecting them to be aligned.
+	pub fn consolidate(&mut self, other: Self) {
+		// TODO: refactoring.
+		let inner_transaction = self.inner.get_or_insert_with(|| match &other.inner {
+			Some(InnerBackendTransaction::Trie(_)) => InnerBackendTransaction::Trie(
+				TrieBackendTransaction::with_hasher(RandomState::default()),
+			),
+			Some(InnerBackendTransaction::Nomt()) => unimplemented!(),
+			_ => unreachable!(),
+		});
+
+		match inner_transaction {
+			InnerBackendTransaction::Trie(trie_transaction) =>
+				trie_transaction.consolidate(other.trie_transaction()),
+			InnerBackendTransaction::Nomt() => unimplemented!(),
+		}
+	}
+
+	/// Extract the key from the transaction, treating it as Storage.
+	pub fn get(
+		&self,
+		key: &H::Out,
+		prefix: hash_db::Prefix,
+		// TODO: This wil need to change is something which can be returned by both
+		// nomt and sp_trie::PrefixedMemoryDB
+		// why is sp_trie leaking here?
+		// use alloc::string::String;
+	) -> Option<sp_trie::DBValue> {
+		match &self.inner {
+			Some(InnerBackendTransaction::Trie(trie_transaction)) => {
+				//use hash_db::HashDB;
+				//trie_transaction.get(key, prefix)
+				hash_db::HashDB::get(trie_transaction, key, prefix)
+			},
+			Some(InnerBackendTransaction::Nomt()) => {
+				unimplemented!("there must be a side hash map containing changes and updates")
+			},
+			None => unreachable!(),
+		}
+	}
+}
+
+impl<H: Hasher> Default for BackendTransaction<H> {
+	fn default() -> Self {
+		Self { inner: None }
+	}
+}
 
 /// A state backend is used to read state data and can have changes committed
 /// to it.
@@ -301,7 +421,7 @@ pub trait Backend<H: Hasher>: core::fmt::Debug {
 	where
 		H::Out: Ord + Encode,
 	{
-		let mut txs = BackendTransaction::with_hasher(RandomState::default());
+		let mut txs = BackendTransaction::default();
 		let mut child_roots: Vec<_> = Default::default();
 		// child first
 		for (child_info, child_delta) in child_deltas {

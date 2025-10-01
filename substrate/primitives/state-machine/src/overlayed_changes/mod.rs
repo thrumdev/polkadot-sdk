@@ -228,7 +228,7 @@ impl<H: Hasher> Default for StorageChanges<H> {
 			main_storage_changes: Default::default(),
 			child_storage_changes: Default::default(),
 			offchain_storage_changes: Default::default(),
-			transaction: BackendTransaction::with_hasher(Default::default()),
+			transaction: Default::default(),
 			transaction_storage_root: Default::default(),
 			#[cfg(feature = "std")]
 			transaction_index_changes: Default::default(),
@@ -656,10 +656,15 @@ impl<H: Hasher> OverlayedChanges<H> {
 
 		let delta = self.top.changes_mut().map(|(k, v)| (&k[..], v.value().map(|v| &v[..])));
 
-		let child_delta = self
+		// NOTE: child tries updates are skipped for now.
+		// This should just be modified to be part of the main delta and the keys being made by
+		// default_child_prefix ++ storage_key ++ key
+		let mut child_delta = self
 			.children
 			.values_mut()
-			.map(|v| (&v.1, v.0.changes_mut().map(|(k, v)| (&k[..], v.value().map(|v| &v[..])))));
+			.map(|v| (&v.1, v.0.changes_mut().map(|(k, v)| (&k[..], v.value().map(|v| &v[..])))))
+			.into_iter();
+		assert!(child_delta.next().is_none());
 
 		let (root, transaction) = backend.full_storage_root(delta, child_delta, state_version);
 
