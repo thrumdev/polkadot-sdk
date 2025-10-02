@@ -734,7 +734,7 @@ coretime-rococo-runtime = { path = "cumulus/parachains/runtimes/coretime/coretim
 coretime-westend-emulated-chain = { path = "cumulus/parachains/integration-tests/emulated/chains/parachains/coretime/coretime-westend" }
 coretime-westend-runtime = { path = "cumulus/parachains/runtimes/coretime/coretime-westend" }
 cpu-time = { version = "1.0.0" }
-criterion = { version = "0.5.1", default-features = false }
+criterion = { version = "0.7.0", default-features = false }
 cumulus-client-bootnodes = { path = "cumulus/client/bootnodes", default-features = false }
 cumulus-client-cli = { path = "cumulus/client/cli", default-features = false }
 cumulus-client-collator = { path = "cumulus/client/collator", default-features = false }

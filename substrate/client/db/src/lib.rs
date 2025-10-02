@@ -1025,6 +1025,12 @@ struct StorageDb<Block: BlockT> {
 	prefix_keys: bool,
 }
 
+impl<Block: BlockT> StorageDb<Block> {
+	fn nomt_storage(&self) -> Option<Arc<Nomt<Blake3Hasher>>> {
+		self.nomt_db.as_ref().map(|nomt| nomt.clone())
+	}
+}
+
 impl<Block: BlockT> sp_state_machine::Storage<HashingFor<Block>> for StorageDb<Block> {
 	fn get(&self, key: &Block::Hash, prefix: Prefix) -> Result<Option<DBValue>, String> {
 		if self.prefix_keys {
@@ -2574,15 +2580,16 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 						.is_some()
 				};
 
-				if let Ok(()) =
-					self.storage.state_db.pin(&hash, hdr.number.saturated_into::<u64>(), hint)
-				{
-					let root = hdr.state_root;
-					if self.storage.nomt_db.is_some() {
-						panic!("StateBackend should be opened on top of NOMT");
-					}
+				let nomt_storage = self.storage.nomt_storage();
+				let is_nomt_backend = nomt_storage.is_some();
 
-					let db_state =
+				let build_state_backend = || -> Self::State {
+					let root = hdr.state_root;
+					let db_state = if let Some(nomt_storage) = nomt_storage {
+						// NOTE: nomt_db state here will need to properly provide
+						// a chain of overlays to handle multiple states
+						DbStateBuilder::<HashingFor<Block>>::new_nomt(nomt_storage).build()
+					} else {
 						DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
 							.with_trie_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
 								if matches!(trie_cache_context, TrieCacheContext::Trusted) {
@@ -2591,9 +2598,20 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 									c.local_cache_untrusted()
 								}
 							}))
-							.build();
+							.build()
+					};
 					let state = RefTrackingState::new(db_state, self.storage.clone(), Some(hash));
-					Ok(RecordStatsState::new(state, Some(hash), self.state_usage.clone()))
+					RecordStatsState::new(state, Some(hash), self.state_usage.clone())
+				};
+
+				if is_nomt_backend {
+					return Ok(build_state_backend())
+				}
+
+				if let Ok(()) =
+					self.storage.state_db.pin(&hash, hdr.number.saturated_into::<u64>(), hint)
+				{
+					Ok(build_state_backend())
 				} else {
 					Err(sp_blockchain::Error::UnknownBlock(format!(
 						"State already discarded for {hash:?}",

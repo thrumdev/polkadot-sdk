@@ -6,10 +6,11 @@ use crate::{
 	BackendTransaction, IterArgs, StorageKey, StorageValue, TrieCacheProvider, UsageInfo,
 };
 
-#[cfg(feature = "std")]
 use crate::backend::AsTrieBackend;
 use codec::Codec;
+use nomt::{hasher::Blake3Hasher, Nomt};
 use sp_core::storage::{ChildInfo, StateVersion};
+use std::sync::Arc;
 
 use hash_db::Hasher;
 
@@ -22,7 +23,7 @@ pub enum StateBackendBuilder<
 	R = DefaultRecorder<H>,
 > {
 	Trie { storage: S, root: H::Out, recorder: Option<R>, cache: Option<C> },
-	Nomt(),
+	Nomt { db: Arc<Nomt<Blake3Hasher>>, recorder: bool },
 }
 
 impl<S, H> StateBackendBuilder<S, H>
@@ -36,8 +37,8 @@ where
 	}
 
 	/// Create a [`TrieBackend::Nomt`] state backend builder.
-	pub fn new_nomt() -> Self {
-		Self::Nomt()
+	pub fn new_nomt(db: Arc<Nomt<Blake3Hasher>>) -> Self {
+		Self::Nomt { db, recorder: false }
 	}
 }
 
@@ -63,6 +64,14 @@ where
 	pub fn with_trie_recorder(mut self, new_recorder: DefaultRecorder<H>) -> Self {
 		if let StateBackendBuilder::Trie { recorder, .. } = &mut self {
 			*recorder = Some(new_recorder);
+		}
+		self
+	}
+
+	/// Toggle [`TrieBackend::Nomt`] recorder.
+	pub fn with_nomt_recorder(mut self) -> Self {
+		if let StateBackendBuilder::Nomt { recorder, .. } = &mut self {
+			*recorder = true;
 		}
 		self
 	}
@@ -97,16 +106,15 @@ where
 					.build();
 				StateBackend::new_trie_backend(trie_backend)
 			},
-			StateBackendBuilder::Nomt() => {
-				todo!()
-			},
+			StateBackendBuilder::Nomt { db, recorder } =>
+				StateBackend::new_nomt_backend(db, recorder),
 		}
 	}
 }
 
 enum InnerStateBackend<S: TrieBackendStorage<H>, H: Hasher, C, R> {
 	Trie(TrieBackend<S, H, C, R>),
-	Nomt(),
+	Nomt { db: Arc<Nomt<Blake3Hasher>>, recorder: bool },
 }
 
 pub struct StateBackend<
@@ -122,7 +130,7 @@ impl<S: TrieBackendStorage<H>, H: Hasher, C, R> core::fmt::Debug for StateBacken
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		match &self.inner {
 			InnerStateBackend::Trie(_) => write!(f, "TrieBackend"),
-			InnerStateBackend::Nomt() => write!(f, "NomtBackend"),
+			InnerStateBackend::Nomt { .. } => write!(f, "NomtBackend"),
 		}
 	}
 }
@@ -137,21 +145,15 @@ where
 		Self { inner: InnerStateBackend::Trie(trie_backend) }
 	}
 
-	fn new_nomt_backend() -> Self {
-		todo!()
+	fn new_nomt_backend(db: Arc<Nomt<Blake3Hasher>>, recorder: bool) -> Self {
+		log::info!("state_backend new_nomt_backend");
+		Self { inner: InnerStateBackend::Nomt { db, recorder } }
 	}
 
 	fn trie(&self) -> &TrieBackend<S, H, C, R> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend,
-			InnerStateBackend::Nomt() => unreachable!(),
-		}
-	}
-
-	fn nomt(&self) -> &TrieBackend<S, H, C, R> {
-		match &self.inner {
-			InnerStateBackend::Trie(trie_backend) => unreachable!(),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => unreachable!(),
 		}
 	}
 }
@@ -168,7 +170,7 @@ where
 	pub fn root(&self) -> &H::Out {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.root(),
-			InnerStateBackend::Nomt() => unreachable!(),
+			InnerStateBackend::Nomt { .. } => unreachable!(),
 		}
 	}
 }
@@ -189,14 +191,14 @@ where
 		log::info!("state_backend storage");
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.storage(key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
 	fn storage_hash(&self, key: &[u8]) -> Result<Option<H::Out>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.storage_hash(key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -207,7 +209,7 @@ where
 	) -> Result<Option<Vec<u8>>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.child_storage(child_info, key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -219,7 +221,7 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.child_storage_hash(child_info, key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -229,7 +231,7 @@ where
 	) -> Result<Option<sp_trie::MerkleValue<H::Out>>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.closest_merkle_value(key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -241,14 +243,14 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.child_closest_merkle_value(child_info, key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
 	fn exists_storage(&self, key: &[u8]) -> Result<bool, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.exists_storage(key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -260,14 +262,14 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.exists_child_storage(child_info, key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
 	fn next_storage_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.next_storage_key(key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -279,7 +281,7 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.next_child_storage_key(child_info, key),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -291,7 +293,7 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.storage_root(delta, state_version),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -304,7 +306,7 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.child_storage_root(child_info, delta, state_version),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
@@ -312,26 +314,25 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.raw_iter(args).map(|iter| Self::RawIter::new_trie_iterator(iter)),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
 	fn register_overlay_stats(&self, stats: &StateMachineStats) {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.register_overlay_stats(stats),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 
 	fn usage_info(&self) -> UsageInfo {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.usage_info(),
-			InnerStateBackend::Nomt() => todo!(),
+			InnerStateBackend::Nomt { .. } => todo!(),
 		}
 	}
 }
 
-#[cfg(feature = "std")]
 impl<S: TrieBackendStorage<H>, H: Hasher, C> AsTrieBackend<H, C> for StateBackend<S, H, C> {
 	type TrieBackendStorage = S;
 
