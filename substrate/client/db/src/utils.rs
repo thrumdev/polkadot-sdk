@@ -25,6 +25,7 @@ use log::{debug, info};
 
 use crate::{Database, DatabaseSource, DbHash};
 use codec::Decode;
+use nomt::{hasher::Blake3Hasher, Nomt};
 use sc_client_api::blockchain::{BlockGap, BlockGapType};
 use sp_database::Transaction;
 use sp_runtime::{
@@ -201,9 +202,20 @@ fn open_database_at<Block: BlockT>(
 ) -> Result<OpenDb, OpenDbError> {
 	let opened_dbs = match &db_source {
 		// NOMT will contiune to use ParityDb to handle everything that is not within the STATE.
-		DatabaseSource::Nomt { paritydb_path, nomt_path: _nomt_path } => {
+		DatabaseSource::Nomt { paritydb_path, nomt_path } => {
 			let parity_db = open_parity_db::<Block>(paritydb_path, db_type, create)?;
-			let nomt_db = (); // TODO: open nomt here!
+
+			// Define the options used to open NOMT
+			let mut opts = nomt::Options::new();
+			opts.path(nomt_path);
+			opts.commit_concurrency(1);
+
+			// Open nomt database.
+			log::info!("Opening NOMT");
+			let nomt_db = Arc::new(
+				Nomt::<Blake3Hasher>::open(opts)
+					.map_err(|e| OpenDbError::Internal(format!("{e}")))?,
+			);
 			OpenDb::NOMT(parity_db, nomt_db)
 		},
 		DatabaseSource::ParityDb { path } =>
@@ -252,12 +264,11 @@ type OpenDbResult = Result<Arc<dyn Database<DbHash>>, OpenDbError>;
 
 pub enum OpenDb {
 	KVDB(Arc<dyn Database<DbHash>>),
-	// TODO: update with nomt instance
-	NOMT(Arc<dyn Database<DbHash>>, ()),
+	NOMT(Arc<dyn Database<DbHash>>, Arc<Nomt<Blake3Hasher>>),
 }
 
 impl OpenDb {
-	pub fn raw_dbs(self) -> (Arc<dyn Database<DbHash>>, Option<()>) {
+	pub fn raw_dbs(self) -> (Arc<dyn Database<DbHash>>, Option<Arc<Nomt<Blake3Hasher>>>) {
 		match self {
 			OpenDb::KVDB(kvdb) => (kvdb, None),
 			OpenDb::NOMT(kvdb, nomt) => (kvdb, Some(nomt)),

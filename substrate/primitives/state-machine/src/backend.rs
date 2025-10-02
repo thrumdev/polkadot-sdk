@@ -183,10 +183,14 @@ pub enum InnerBackendTransaction<H>
 where
 	H: Hasher,
 {
+	/// Trie specific backend transaction.
 	Trie(TrieBackendTransaction<H>),
+	/// Nomt specific backend transaction.
 	Nomt(),
 }
 
+/// A Backend transaction which contains the modifications needed to be performed
+/// to the db to reflect runtime changes.
 pub struct BackendTransaction<H: Hasher> {
 	inner: Option<InnerBackendTransaction<H>>,
 }

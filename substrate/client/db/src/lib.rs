@@ -60,6 +60,7 @@ use crate::{
 };
 use codec::{Decode, Encode};
 use hash_db::Prefix;
+use nomt::{hasher::Blake3Hasher, Nomt};
 use sc_client_api::{
 	backend::NewBlockState,
 	blockchain::{BlockGap, BlockGapType},
@@ -1019,7 +1020,7 @@ impl<Block: BlockT> sc_client_api::backend::BlockImportOperation<Block>
 struct StorageDb<Block: BlockT> {
 	pub db: Arc<dyn Database<DbHash>>,
 	pub state_db: StateDb<Block::Hash, Vec<u8>, StateMetaDb>,
-	pub nomt_db: Option<()>,
+	pub nomt_db: Option<Arc<Nomt<Blake3Hasher>>>,
 	pub nomt_state_db: Option<()>,
 	prefix_keys: bool,
 }
@@ -2586,6 +2587,10 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 					self.storage.state_db.pin(&hash, hdr.number.saturated_into::<u64>(), hint)
 				{
 					let root = hdr.state_root;
+					if self.storage.nomt_db.is_some() {
+						panic!("StateBackend should be opened on top of NOMT");
+					}
+
 					let db_state =
 						DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
 							.with_trie_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
