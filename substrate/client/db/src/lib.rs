@@ -2587,7 +2587,8 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 					let root = hdr.state_root;
 					let db_state = if let Some(nomt_storage) = nomt_storage {
 						// NOTE: nomt_db state here will need to properly provide
-						// a chain of overlays to handle multiple states
+						// a chain of overlays to handle multiple states.
+						// For now, the assumption is to always work on the same state.
 						DbStateBuilder::<HashingFor<Block>>::new_nomt(nomt_storage).build()
 					} else {
 						DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)

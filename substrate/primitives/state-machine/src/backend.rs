@@ -27,6 +27,8 @@ use alloc::vec::Vec;
 use codec::Encode;
 use core::marker::PhantomData;
 use hash_db::Hasher;
+#[cfg(feature = "std")]
+use nomt::Overlay as NomtOverlay;
 use sp_core::storage::{ChildInfo, StateVersion, TrackedStorageKey};
 #[cfg(feature = "std")]
 use sp_core::traits::RuntimeCode;
@@ -173,7 +175,11 @@ where
 pub type TrieBackendTransaction<H> = PrefixedMemoryDB<H>;
 
 /// Nomt Backend Transaction type.
-pub type NomtBackendTransaction = ();
+#[cfg(feature = "std")]
+pub struct NomtBackendTransaction {
+	transaction: NomtOverlay,
+	reads: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+}
 
 /// The transaction type used by [`Backend`].
 ///
@@ -186,7 +192,8 @@ where
 	/// Trie specific backend transaction.
 	Trie(TrieBackendTransaction<H>),
 	/// Nomt specific backend transaction.
-	Nomt(),
+	#[cfg(feature = "std")]
+	Nomt(NomtBackendTransaction),
 }
 
 /// A Backend transaction which contains the modifications needed to be performed
@@ -206,7 +213,8 @@ impl<H: Hasher> core::clone::Clone for InnerBackendTransaction<H> {
 		match self {
 			InnerBackendTransaction::Trie(trie_transaction) =>
 				InnerBackendTransaction::Trie(trie_transaction.clone()),
-			InnerBackendTransaction::Nomt() => InnerBackendTransaction::Nomt(),
+			#[cfg(feature = "std")]
+			InnerBackendTransaction::Nomt(_) => unimplemented!(),
 		}
 	}
 }
@@ -218,8 +226,9 @@ impl<H: Hasher> BackendTransaction<H> {
 	}
 
 	/// Creates a BackendTransaction from a NomtBackendTransaction.
-	pub fn new_nomt_transaction(_nomt_transaction: NomtBackendTransaction) -> Self {
-		Self { inner: Some(InnerBackendTransaction::Nomt()) }
+	#[cfg(feature = "std")]
+	pub fn new_nomt_transaction(nomt_transaction: NomtBackendTransaction) -> Self {
+		Self { inner: Some(InnerBackendTransaction::Nomt(nomt_transaction)) }
 	}
 
 	/// Regardless of the previous state of the BackendTransaction
@@ -230,8 +239,9 @@ impl<H: Hasher> BackendTransaction<H> {
 
 	/// Regardless of the previous state of the BackendTransaction
 	/// update it with the provided NomtBackendTransaction.
-	pub fn set_nomt_transaction(&mut self, _nomt_transaction: NomtBackendTransaction) {
-		self.inner = Some(InnerBackendTransaction::Nomt());
+	#[cfg(feature = "std")]
+	pub fn set_nomt_transaction(&mut self, nomt_transaction: NomtBackendTransaction) {
+		self.inner = Some(InnerBackendTransaction::Nomt(nomt_transaction));
 	}
 
 	/// Extract the TrieBackendTransaction from the BackendTransaction.
@@ -243,9 +253,10 @@ impl<H: Hasher> BackendTransaction<H> {
 	}
 
 	/// Extract the TrieBackendTransaction from the NomtBackendTransaction.
+	#[cfg(feature = "std")]
 	pub fn nomt_transaction(self) -> NomtBackendTransaction {
 		match self.inner {
-			Some(InnerBackendTransaction::Nomt()) => (),
+			Some(InnerBackendTransaction::Nomt(nomt_transaction)) => nomt_transaction,
 			_ => unreachable!(),
 		}
 	}
@@ -258,14 +269,16 @@ impl<H: Hasher> BackendTransaction<H> {
 			Some(InnerBackendTransaction::Trie(_)) => InnerBackendTransaction::Trie(
 				TrieBackendTransaction::with_hasher(RandomState::default()),
 			),
-			Some(InnerBackendTransaction::Nomt()) => unimplemented!(),
+			#[cfg(feature = "std")]
+			Some(InnerBackendTransaction::Nomt(_)) => unimplemented!(),
 			_ => unreachable!(),
 		});
 
 		match inner_transaction {
 			InnerBackendTransaction::Trie(trie_transaction) =>
 				trie_transaction.consolidate(other.trie_transaction()),
-			InnerBackendTransaction::Nomt() => unimplemented!(),
+			#[cfg(feature = "std")]
+			InnerBackendTransaction::Nomt(_) => unimplemented!(),
 		}
 	}
 
