@@ -270,26 +270,8 @@ impl<H: Hasher> BackendTransaction<H> {
 	}
 
 	/// Extract the key from the transaction, treating it as Storage.
-	pub fn get(
-		&self,
-		key: &H::Out,
-		prefix: hash_db::Prefix,
-		// TODO: This wil need to change is something which can be returned by both
-		// nomt and sp_trie::PrefixedMemoryDB
-		// why is sp_trie leaking here?
-		// use alloc::string::String;
-	) -> Option<sp_trie::DBValue> {
-		match &self.inner {
-			Some(InnerBackendTransaction::Trie(trie_transaction)) => {
-				//use hash_db::HashDB;
-				//trie_transaction.get(key, prefix)
-				hash_db::HashDB::get(trie_transaction, key, prefix)
-			},
-			Some(InnerBackendTransaction::Nomt()) => {
-				unimplemented!("there must be a side hash map containing changes and updates")
-			},
-			None => unreachable!(),
-		}
+	pub fn get(&self, _key: &H::Out, _prefix: hash_db::Prefix) -> Option<sp_trie::DBValue> {
+		panic!("BackendTransaction is not expected to used as Storage");
 	}
 }
 

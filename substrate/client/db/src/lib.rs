@@ -1584,6 +1584,7 @@ impl<Block: BlockT> Backend<Block> {
 					// When we don't want to commit the genesis state, we still preserve it in
 					// memory to bootstrap consensus. It is queried for an initial list of
 					// authorities, etc.
+					panic!("This is never expected within NOMT PoC");
 					*self.genesis_state.write() = Some(Arc::new(DbGenesisStorage::new(
 						*pending_block.header.state_root(),
 						operation.db_updates.clone(),
@@ -2557,21 +2558,11 @@ impl<Block: BlockT> sc_client_api::backend::Backend<Block> for Backend<Block> {
 		trie_cache_context: TrieCacheContext,
 	) -> ClientResult<Self::State> {
 		if hash == self.blockchain.meta.read().genesis_hash {
-			if let Some(genesis_state) = &*self.genesis_state.read() {
-				let root = genesis_state.root;
-				let db_state =
-					DbStateBuilder::<HashingFor<Block>>::new_trie(genesis_state.clone(), root)
-						.with_trie_optional_cache(self.shared_trie_cache.as_ref().map(|c| {
-							if matches!(trie_cache_context, TrieCacheContext::Trusted) {
-								c.local_cache_trusted()
-							} else {
-								c.local_cache_untrusted()
-							}
-						}))
-						.build();
-
-				let state = RefTrackingState::new(db_state, self.storage.clone(), None);
-				return Ok(RecordStatsState::new(state, None, self.state_usage.clone()));
+			// Using the backend transaction saved within the genesis state
+			// is only expected to happen in the rare case of not needing to commit the genesis
+			// state, but still requiring it in memory to bootstrap consensus.
+			if self.genesis_state.read().is_some() {
+				panic!("This is never expected within NOMT PoC");
 			}
 		}
 
