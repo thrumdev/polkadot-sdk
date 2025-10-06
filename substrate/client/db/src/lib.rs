@@ -1591,10 +1591,6 @@ impl<Block: BlockT> Backend<Block> {
 					// memory to bootstrap consensus. It is queried for an initial list of
 					// authorities, etc.
 					panic!("This is never expected within NOMT PoC");
-					*self.genesis_state.write() = Some(Arc::new(DbGenesisStorage::new(
-						*pending_block.header.state_root(),
-						operation.db_updates.clone(),
-					)));
 				}
 			}
 
@@ -2040,11 +2036,19 @@ impl<Block: BlockT> Backend<Block> {
 
 	fn empty_state(&self) -> RecordStatsState<RefTrackingState<Block>, Block> {
 		let root = EmptyStorage::<Block>::new().0; // Empty trie
-		let db_state = DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
-			.with_trie_optional_cache(
-				self.shared_trie_cache.as_ref().map(|c| c.local_cache_untrusted()),
-			)
-			.build();
+
+		let nomt_storage = self.storage.nomt_storage();
+		let is_nomt_backend = nomt_storage.is_some();
+
+		let db_state = if let Some(nomt_storage) = nomt_storage {
+			DbStateBuilder::<HashingFor<Block>>::new_nomt(nomt_storage).build()
+		} else {
+			DbStateBuilder::<HashingFor<Block>>::new_trie(self.storage.clone(), root)
+				.with_trie_optional_cache(
+					self.shared_trie_cache.as_ref().map(|c| c.local_cache_untrusted()),
+				)
+				.build()
+		};
 
 		let state = RefTrackingState::new(db_state, self.storage.clone(), None);
 		RecordStatsState::new(state, None, self.state_usage.clone())

@@ -6,11 +6,13 @@ use crate::{
 	BackendTransaction, IterArgs, StorageKey, StorageValue, TrieCacheProvider, UsageInfo,
 };
 
-use crate::backend::AsTrieBackend;
+use crate::backend::{AsTrieBackend, NomtBackendTransaction};
 use codec::Codec;
-use nomt::{hasher::Blake3Hasher, Nomt};
+use nomt::{
+	hasher::Blake3Hasher, KeyReadWrite, KeyValueIterator, Nomt, Session, SessionParams, WitnessMode,
+};
 use sp_core::storage::{ChildInfo, StateVersion};
-use std::sync::Arc;
+use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
 
 use hash_db::Hasher;
 
@@ -114,7 +116,12 @@ where
 
 enum InnerStateBackend<S: TrieBackendStorage<H>, H: Hasher, C, R> {
 	Trie(TrieBackend<S, H, C, R>),
-	Nomt { db: Arc<Nomt<Blake3Hasher>>, recorder: bool },
+	Nomt {
+		db: Arc<Nomt<Blake3Hasher>>,
+		recorder: bool,
+		session: RefCell<Option<Session<Blake3Hasher>>>,
+		reads: RefCell<BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
+	},
 }
 
 pub struct StateBackend<
@@ -141,13 +148,21 @@ where
 	H: Hasher,
 {
 	fn new_trie_backend(trie_backend: TrieBackend<S, H, C, R>) -> Self {
-		log::info!("state_backend new_trie_backend");
-		Self { inner: InnerStateBackend::Trie(trie_backend) }
+		panic!("new_trie_backend is never expected");
 	}
 
 	fn new_nomt_backend(db: Arc<Nomt<Blake3Hasher>>, recorder: bool) -> Self {
-		log::info!("state_backend new_nomt_backend");
-		Self { inner: InnerStateBackend::Nomt { db, recorder } }
+		let witness_mode =
+			if recorder { WitnessMode::read_write() } else { WitnessMode::disabled() };
+		let session = db.begin_session(SessionParams::default().witness_mode(witness_mode));
+		Self {
+			inner: InnerStateBackend::Nomt {
+				db,
+				recorder,
+				session: RefCell::new(Some(session)),
+				reads: RefCell::new(BTreeMap::new()),
+			},
+		}
 	}
 
 	fn trie(&self) -> &TrieBackend<S, H, C, R> {
@@ -188,17 +203,37 @@ where
 	type RawIter = RawIter<S, H, C, R>;
 
 	fn storage(&self, key: &[u8]) -> Result<Option<StorageValue>, Self::Error> {
-		log::info!("state_backend storage");
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.storage(key),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { session, reads, recorder, .. } => {
+				let val = session
+					.borrow()
+					.as_ref()
+					.ok_or("Session must be open".to_string())?
+					.read(key.to_vec())
+					.map_err(|e| format!("{e:?}"))?;
+				if *recorder {
+					reads.borrow_mut().insert(key.to_vec(), val.clone());
+				}
+				Ok(val)
+			},
 		}
 	}
 
 	fn storage_hash(&self, key: &[u8]) -> Result<Option<H::Out>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.storage_hash(key),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { session, .. } => {
+				use nomt_core::hasher::BinaryHash;
+				Ok(session
+					.borrow()
+					.as_ref()
+					.ok_or("Session must be open".to_string())?
+					.read(key.to_vec())
+					.map_err(|e| format!("{e:?}"))?
+					.map(|val| nomt_core::hasher::blake3::Blake3BinaryHasher::hash(&val))
+					.map(|hash: [u8; 32]| sp_core::hash::convert_hash(&hash)))
+			},
 		}
 	}
 
@@ -250,7 +285,15 @@ where
 	fn exists_storage(&self, key: &[u8]) -> Result<bool, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.exists_storage(key),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { session, .. } => {
+				let val = session
+					.borrow()
+					.as_ref()
+					.ok_or("Session must be open".to_string())?
+					.read(key.to_vec())
+					.map_err(|e| format!("{e:?}"))?;
+				Ok(val.is_some())
+			},
 		}
 	}
 
@@ -269,7 +312,10 @@ where
 	fn next_storage_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Self::Error> {
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) => trie_backend.next_storage_key(key),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { session, .. } => {
+				let mut iter = session.borrow_mut().as_mut().unwrap().iterator(key.to_vec(), None);
+				Ok(iter.next().map(|(key, _val)| key))
+			},
 		}
 	}
 
@@ -293,7 +339,57 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.storage_root(delta, state_version),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { recorder, reads, session, .. } => {
+				let mut actual_access: Vec<_> = if *recorder {
+					delta
+						.into_iter()
+						.map(|(key, maybe_val)| {
+							(
+								key.to_vec(),
+								KeyReadWrite::Write(
+									maybe_val.as_ref().map(|inner_val| inner_val.to_vec()),
+								),
+							)
+						})
+						.collect()
+				} else {
+					let mut reads = reads.borrow_mut();
+					let mut actual_access = vec![];
+					for (key, maybe_val) in delta.into_iter() {
+						let maybe_val = maybe_val.as_ref().map(|inner_val| inner_val.to_vec());
+						let key = key.to_vec();
+						let key_read_write = match reads.remove(&key) {
+							Some(prev_val) => KeyReadWrite::ReadThenWrite(prev_val, maybe_val),
+							None => KeyReadWrite::Write(maybe_val),
+						};
+						actual_access.push((key, key_read_write));
+					}
+					actual_access.extend(
+						std::mem::take(&mut *reads)
+							.into_iter()
+							.map(|(key, val)| (key, KeyReadWrite::Read(val))),
+					);
+					actual_access
+				};
+
+				actual_access.sort_by(|(k1, _), (k2, _)| k1.cmp(k2));
+
+				// UNWRAP: Session is expected to be open.
+				let mut finished = std::mem::take(&mut *session.borrow_mut())
+					.unwrap()
+					.finish(actual_access)
+					.unwrap();
+				let witness = finished.take_witness();
+				let root = finished.root().into_inner();
+				let overlay = finished.into_overlay();
+				(
+					sp_core::hash::convert_hash(&root),
+					BackendTransaction::new_nomt_transaction(NomtBackendTransaction {
+						transaction: overlay,
+						witness,
+					}),
+				)
+			},
 		}
 	}
 
@@ -314,7 +410,13 @@ where
 		match &self.inner {
 			InnerStateBackend::Trie(trie_backend) =>
 				trie_backend.raw_iter(args).map(|iter| Self::RawIter::new_trie_iterator(iter)),
-			InnerStateBackend::Nomt { .. } => todo!(),
+			InnerStateBackend::Nomt { session, .. } => {
+				Ok(Self::RawIter::new_nomt_iterator(
+					// UNWRAP: Session is expected to be open.
+					&mut *session.borrow_mut().as_mut().unwrap(),
+					args,
+				))
+			},
 		}
 	}
 
@@ -346,7 +448,7 @@ where
 	H: Hasher,
 {
 	Trie(crate::trie_backend_essence::RawIter<S, H, C, R>),
-	Nomt(),
+	Nomt(RefCell<std::iter::Peekable<KeyValueIterator>>),
 }
 
 pub struct RawIter<S, H, C, R>
@@ -364,8 +466,40 @@ where
 		Self { inner: InnerRawIter::Trie(iter) }
 	}
 
-	pub fn new_nomt_iterator() -> Self {
-		todo!()
+	pub fn new_nomt_iterator(nomt_session: &mut Session<Blake3Hasher>, args: IterArgs) -> Self {
+		let start = match (&args.prefix, &args.start_at) {
+			(Some(prefix), None) => prefix.to_vec(),
+			(None, Some(start_at)) => start_at.to_vec(),
+			(Some(prefix), Some(start_at)) => {
+				assert!(start_at.starts_with(prefix));
+				start_at.to_vec()
+			},
+			_ => unreachable!(),
+		};
+
+		let end = if let Some(prefix) = &args.prefix {
+			let mut end = prefix.to_vec();
+			for byte in end.iter_mut().rev() {
+				*byte = byte.wrapping_add(1);
+				if *byte != 0 {
+					break;
+				}
+			}
+			Some(end)
+		} else {
+			None
+		};
+
+		let nomt_iter = RefCell::new(nomt_session.iterator(start.clone(), end).peekable());
+
+		match nomt_iter.borrow_mut().peek().map(|(key, val)| key) {
+			Some(first_key) if args.start_at_exclusive && *first_key == start => {
+				let _ = nomt_iter.borrow_mut().next();
+			},
+			_ => (),
+		}
+
+		Self { inner: InnerRawIter::Nomt(nomt_iter) }
 	}
 }
 
@@ -374,7 +508,7 @@ where
 	H: Hasher,
 {
 	fn default() -> Self {
-		Self { inner: InnerRawIter::Trie(crate::trie_backend_essence::RawIter::default()) }
+		todo!("")
 	}
 }
 
@@ -395,7 +529,8 @@ where
 	) -> Option<core::result::Result<StorageKey, crate::DefaultError>> {
 		match &mut self.inner {
 			InnerRawIter::Trie(trie_iter) => trie_iter.next_key(backend.trie()),
-			InnerRawIter::Nomt() => todo!(),
+			InnerRawIter::Nomt(nomt_iter) =>
+				nomt_iter.borrow_mut().next().map(|(key, _val)| Ok(key)),
 		}
 	}
 
@@ -405,14 +540,14 @@ where
 	) -> Option<core::result::Result<(StorageKey, StorageValue), crate::DefaultError>> {
 		match &mut self.inner {
 			InnerRawIter::Trie(trie_iter) => trie_iter.next_pair(backend.trie()),
-			InnerRawIter::Nomt() => todo!(),
+			InnerRawIter::Nomt(nomt_iter) => nomt_iter.borrow_mut().next().map(|pair| Ok(pair)),
 		}
 	}
 
 	fn was_complete(&self) -> bool {
 		match &self.inner {
 			InnerRawIter::Trie(trie_iter) => trie_iter.was_complete(),
-			InnerRawIter::Nomt() => todo!(),
+			InnerRawIter::Nomt(nomt_iter) => nomt_iter.borrow_mut().peek().is_some(),
 		}
 	}
 }

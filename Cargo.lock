@@ -23617,6 +23617,7 @@ dependencies = [
  "hash-db",
  "log",
  "nomt",
+ "nomt-core",
  "parity-scale-codec",
  "parking_lot 0.12.3",
  "pretty_assertions",

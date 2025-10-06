@@ -29,6 +29,8 @@ use core::marker::PhantomData;
 use hash_db::Hasher;
 #[cfg(feature = "std")]
 use nomt::Overlay as NomtOverlay;
+#[cfg(feature = "std")]
+use nomt_core::witness::Witness as NomtWitness;
 use sp_core::storage::{ChildInfo, StateVersion, TrackedStorageKey};
 #[cfg(feature = "std")]
 use sp_core::traits::RuntimeCode;
@@ -177,8 +179,10 @@ pub type TrieBackendTransaction<H> = PrefixedMemoryDB<H>;
 /// Nomt Backend Transaction type.
 #[cfg(feature = "std")]
 pub struct NomtBackendTransaction {
-	transaction: NomtOverlay,
-	reads: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+	/// Nomt Overlay which contains the db transaction.
+	pub transaction: NomtOverlay,
+	/// Optional witness of the db transaction.
+	pub witness: Option<NomtWitness>,
 }
 
 /// The transaction type used by [`Backend`].
@@ -264,21 +268,25 @@ impl<H: Hasher> BackendTransaction<H> {
 	/// Consolidate the current BackendTransaction initizling it with the provided one
 	/// or join them, expecting them to be aligned.
 	pub fn consolidate(&mut self, other: Self) {
-		// TODO: refactoring.
-		let inner_transaction = self.inner.get_or_insert_with(|| match &other.inner {
-			Some(InnerBackendTransaction::Trie(_)) => InnerBackendTransaction::Trie(
-				TrieBackendTransaction::with_hasher(RandomState::default()),
-			),
+		if let Some(InnerBackendTransaction::Trie(new_trie_transaction)) = other.inner {
+			let trie_transaction = match core::mem::take(self).inner {
+				Some(InnerBackendTransaction::Trie(mut trie_transaction)) => {
+					trie_transaction.consolidate(new_trie_transaction);
+					trie_transaction
+				},
+				// PANIC: Trie transaction cannot consolidate a Nomt transaction.
+				Some(_) => unreachable!(),
+				None => new_trie_transaction,
+			};
+			self.inner = Some(InnerBackendTransaction::Trie(trie_transaction));
+		} else {
 			#[cfg(feature = "std")]
-			Some(InnerBackendTransaction::Nomt(_)) => unimplemented!(),
-			_ => unreachable!(),
-		});
-
-		match inner_transaction {
-			InnerBackendTransaction::Trie(trie_transaction) =>
-				trie_transaction.consolidate(other.trie_transaction()),
-			#[cfg(feature = "std")]
-			InnerBackendTransaction::Nomt(_) => unimplemented!(),
+			{
+				assert!(self.inner.is_none());
+				self.inner = Some(InnerBackendTransaction::Nomt(other.nomt_transaction()));
+			}
+			#[cfg(not(feature = "std"))]
+			unreachable!()
 		}
 	}
 
@@ -423,6 +431,9 @@ pub trait Backend<H: Hasher>: core::fmt::Debug {
 		let mut txs = BackendTransaction::default();
 		let mut child_roots: Vec<_> = Default::default();
 		// child first
+		// NOTE: Nomt PoC doesn't expect child trie usage.
+		let child_deltas: Vec<_> = child_deltas.collect();
+		assert!(child_deltas.is_empty());
 		for (child_info, child_delta) in child_deltas {
 			let (child_root, empty, child_txs) =
 				self.child_storage_root(child_info, child_delta, state_version);

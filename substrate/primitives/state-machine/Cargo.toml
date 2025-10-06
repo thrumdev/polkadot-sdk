@@ -32,6 +32,7 @@ thiserror = { optional = true, workspace = true }
 tracing = { optional = true, workspace = true, default-features = true }
 trie-db = { workspace = true }
 nomt = { workspace = true, optional = true }
+nomt-core = { workspace = true, optional = true }
 
 [dev-dependencies]
 arbitrary = { features = ["derive"], workspace = true }
@@ -59,4 +60,5 @@ std = [
 	"tracing",
 	"trie-db/std",
 	"nomt",
+	"nomt-core",
 ]

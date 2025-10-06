@@ -1481,6 +1481,7 @@ zombienet-orchestrator = { version = "0.3.13" }
 zombienet-sdk = { version = "0.3.13" }
 zstd = { version = "0.12.4", default-features = false }
 nomt = { git = "https://github.com/thrumdev/enomt" }
+nomt-core = { git = "https://github.com/thrumdev/enomt" }
 
 [profile.release]
 # Polkadot runtime requires unwinding.
