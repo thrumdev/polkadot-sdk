@@ -1427,6 +1427,8 @@ impl<Block: BlockT> Backend<Block> {
 		current_transaction_justifications: &mut HashMap<Block::Hash, Justification>,
 		remove_displaced: bool,
 	) -> ClientResult<MetaUpdate<Block>> {
+		panic!("Not handled by NOMT PoC");
+
 		// TODO: ensure best chain contains this block.
 		let number = *header.number();
 		self.ensure_sequential_finalization(header, last_finalized)?;
@@ -1457,6 +1459,7 @@ impl<Block: BlockT> Backend<Block> {
 		&self,
 		transaction: &mut Transaction<DbHash>,
 	) -> ClientResult<()> {
+		panic!("Not handled by NOMT PoC");
 		let best_canonical = match self.storage.state_db.last_canonicalized() {
 			LastCanonicalized::None => 0,
 			LastCanonicalized::Block(b) => b,
@@ -1504,6 +1507,7 @@ impl<Block: BlockT> Backend<Block> {
 
 	fn try_commit_operation(&self, mut operation: BlockImportOperation<Block>) -> ClientResult<()> {
 		let mut transaction = Transaction::new();
+		let mut nomt_transaction = None;
 
 		operation.apply_aux(&mut transaction);
 		operation.apply_offchain(&mut transaction);
@@ -1595,84 +1599,94 @@ impl<Block: BlockT> Backend<Block> {
 			}
 
 			let finalized = if operation.commit_state {
-				let mut changeset: sc_state_db::ChangeSet<Vec<u8>> =
-					sc_state_db::ChangeSet::default();
-				let mut ops: u64 = 0;
-				let mut bytes: u64 = 0;
-				let mut removal: u64 = 0;
-				let mut bytes_removal: u64 = 0;
-				// TODO: Accept only trie transactions until nomt is properly introduced.
-				for (mut key, (val, rc)) in operation.db_updates.trie_transaction().drain() {
-					self.storage.db.sanitize_key(&mut key);
-					if rc > 0 {
+				if self.storage.nomt_db.is_some() {
+					nomt_transaction.replace(operation.db_updates.nomt_transaction().transaction);
+					true
+				} else {
+					let mut changeset: sc_state_db::ChangeSet<Vec<u8>> =
+						sc_state_db::ChangeSet::default();
+					let mut ops: u64 = 0;
+					let mut bytes: u64 = 0;
+					let mut removal: u64 = 0;
+					let mut bytes_removal: u64 = 0;
+					for (mut key, (val, rc)) in operation.db_updates.trie_transaction().drain() {
+						self.storage.db.sanitize_key(&mut key);
+						if rc > 0 {
+							ops += 1;
+							bytes += key.len() as u64 + val.len() as u64;
+							if rc == 1 {
+								changeset.inserted.push((key, val.to_vec()));
+							} else {
+								changeset.inserted.push((key.clone(), val.to_vec()));
+								for _ in 0..rc - 1 {
+									changeset.inserted.push((key.clone(), Default::default()));
+								}
+							}
+						} else if rc < 0 {
+							removal += 1;
+							bytes_removal += key.len() as u64;
+							if rc == -1 {
+								changeset.deleted.push(key);
+							} else {
+								for _ in 0..-rc {
+									changeset.deleted.push(key.clone());
+								}
+							}
+						}
+					}
+					self.state_usage.tally_writes_nodes(ops, bytes);
+					self.state_usage.tally_removed_nodes(removal, bytes_removal);
+
+					let mut ops: u64 = 0;
+					let mut bytes: u64 = 0;
+					for (key, value) in operation
+						.storage_updates
+						.iter()
+						.chain(operation.child_storage_updates.iter().flat_map(|(_, s)| s.iter()))
+					{
 						ops += 1;
-						bytes += key.len() as u64 + val.len() as u64;
-						if rc == 1 {
-							changeset.inserted.push((key, val.to_vec()));
-						} else {
-							changeset.inserted.push((key.clone(), val.to_vec()));
-							for _ in 0..rc - 1 {
-								changeset.inserted.push((key.clone(), Default::default()));
-							}
-						}
-					} else if rc < 0 {
-						removal += 1;
-						bytes_removal += key.len() as u64;
-						if rc == -1 {
-							changeset.deleted.push(key);
-						} else {
-							for _ in 0..-rc {
-								changeset.deleted.push(key.clone());
-							}
+						bytes += key.len() as u64;
+						if let Some(v) = value.as_ref() {
+							bytes += v.len() as u64;
 						}
 					}
-				}
-				self.state_usage.tally_writes_nodes(ops, bytes);
-				self.state_usage.tally_removed_nodes(removal, bytes_removal);
+					self.state_usage.tally_writes(ops, bytes);
 
-				let mut ops: u64 = 0;
-				let mut bytes: u64 = 0;
-				for (key, value) in operation
-					.storage_updates
-					.iter()
-					.chain(operation.child_storage_updates.iter().flat_map(|(_, s)| s.iter()))
-				{
-					ops += 1;
-					bytes += key.len() as u64;
-					if let Some(v) = value.as_ref() {
-						bytes += v.len() as u64;
-					}
-				}
-				self.state_usage.tally_writes(ops, bytes);
-				let number_u64 = number.saturated_into::<u64>();
-				let commit = self
-					.storage
-					.state_db
-					.insert_block(&hash, number_u64, pending_block.header.parent_hash(), changeset)
-					.map_err(|e: sc_state_db::Error<sp_database::error::DatabaseError>| {
-						sp_blockchain::Error::from_state_db(e)
-					})?;
-				apply_state_commit(&mut transaction, commit);
-				if number <= last_finalized_num {
-					// Canonicalize in the db when re-importing existing blocks with state.
-					let commit = self.storage.state_db.canonicalize_block(&hash).map_err(
-						sp_blockchain::Error::from_state_db::<
-							sc_state_db::Error<sp_database::error::DatabaseError>,
-						>,
-					)?;
+					let number_u64 = number.saturated_into::<u64>();
+					let commit = self
+						.storage
+						.state_db
+						.insert_block(
+							&hash,
+							number_u64,
+							pending_block.header.parent_hash(),
+							changeset,
+						)
+						.map_err(|e: sc_state_db::Error<sp_database::error::DatabaseError>| {
+							sp_blockchain::Error::from_state_db(e)
+						})?;
+
 					apply_state_commit(&mut transaction, commit);
-					meta_updates.push(MetaUpdate {
-						hash,
-						number,
-						is_best: false,
-						is_finalized: true,
-						with_state: true,
-					});
+					if number <= last_finalized_num {
+						// Canonicalize in the db when re-importing existing blocks with state.
+						let commit = self.storage.state_db.canonicalize_block(&hash).map_err(
+							sp_blockchain::Error::from_state_db::<
+								sc_state_db::Error<sp_database::error::DatabaseError>,
+							>,
+						)?;
+						apply_state_commit(&mut transaction, commit);
+						meta_updates.push(MetaUpdate {
+							hash,
+							number,
+							is_best: false,
+							is_finalized: true,
+							with_state: true,
+						});
+					}
+					// Check if need to finalize. Genesis is always finalized instantly.
+					let finalized = number_u64 == 0 || pending_block.leaf_state.is_final();
+					finalized
 				}
-
-				// Check if need to finalize. Genesis is always finalized instantly.
-				let finalized = number_u64 == 0 || pending_block.leaf_state.is_final();
-				finalized
 			} else {
 				(number.is_zero() && last_finalized_num.is_zero()) ||
 					pending_block.leaf_state.is_final()
@@ -1869,6 +1883,11 @@ impl<Block: BlockT> Backend<Block> {
 			}
 		}
 
+		if let Some(nomt_overlay) = nomt_transaction {
+			let nomt_db = self.storage.nomt_db.as_ref().unwrap();
+			nomt_overlay.commit(nomt_db).unwrap();
+		}
+
 		self.storage.db.commit(transaction)?;
 
 		// Apply all in-memory state changes.
@@ -1919,12 +1938,14 @@ impl<Block: BlockT> Backend<Block> {
 		};
 
 		if requires_canonicalization && sc_client_api::Backend::have_state_at(self, f_hash, f_num) {
-			let commit = self.storage.state_db.canonicalize_block(&f_hash).map_err(
-				sp_blockchain::Error::from_state_db::<
-					sc_state_db::Error<sp_database::error::DatabaseError>,
-				>,
-			)?;
-			apply_state_commit(transaction, commit);
+			if self.storage.nomt_db.is_none() {
+				let commit = self.storage.state_db.canonicalize_block(&f_hash).map_err(
+					sp_blockchain::Error::from_state_db::<
+						sc_state_db::Error<sp_database::error::DatabaseError>,
+					>,
+				)?;
+				apply_state_commit(transaction, commit);
+			}
 		}
 
 		if remove_displaced {
@@ -1939,7 +1960,9 @@ impl<Block: BlockT> Backend<Block> {
 			}
 		}
 
-		self.prune_blocks(transaction, f_num, current_transaction_justifications)?;
+		if self.storage.nomt_db.is_none() {
+			self.prune_blocks(transaction, f_num, current_transaction_justifications)?;
+		}
 
 		Ok(())
 	}
@@ -1950,6 +1973,8 @@ impl<Block: BlockT> Backend<Block> {
 		finalized_number: NumberFor<Block>,
 		current_transaction_justifications: &mut HashMap<Block::Hash, Justification>,
 	) -> ClientResult<()> {
+		panic!("Not handled by NOMT PoC");
+
 		if let BlocksPruning::Some(blocks_pruning) = self.blocks_pruning {
 			// Always keep the last finalized block
 			let keep = std::cmp::max(blocks_pruning, 1);
@@ -1983,7 +2008,9 @@ impl<Block: BlockT> Backend<Block> {
 		// Discard all blocks from displaced branches
 		for &hash in displaced.displaced_blocks.iter() {
 			self.blockchain.insert_persisted_body_if_pinned(hash)?;
-			self.prune_block(transaction, BlockId::<Block>::hash(hash))?;
+			if self.storage.nomt_db.is_none() {
+				self.prune_block(transaction, BlockId::<Block>::hash(hash))?;
+			}
 		}
 		Ok(())
 	}
@@ -1993,6 +2020,7 @@ impl<Block: BlockT> Backend<Block> {
 		transaction: &mut Transaction<DbHash>,
 		id: BlockId<Block>,
 	) -> ClientResult<()> {
+		panic!("Not handled by NOMT PoC");
 		debug!(target: "db", "Removing block #{id}");
 		utils::remove_from_db(
 			transaction,

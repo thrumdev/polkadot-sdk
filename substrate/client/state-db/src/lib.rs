@@ -378,33 +378,34 @@ impl<BlockHash: Hash, Key: Hash, D: MetaDb> StateDbSync<BlockHash, Key, D> {
 	}
 
 	fn is_pruned(&self, hash: &BlockHash, number: u64) -> IsPruned {
-		match self.mode {
-			PruningMode::ArchiveAll => IsPruned::NotPruned,
-			PruningMode::ArchiveCanonical | PruningMode::Constrained(_) => {
-				if self
-					.non_canonical
-					.last_canonicalized_block_number()
-					.map(|c| number > c)
-					.unwrap_or(true)
-				{
-					if self.non_canonical.have_block(hash) {
-						IsPruned::NotPruned
-					} else {
-						IsPruned::Pruned
-					}
-				} else {
-					match self.pruning.as_ref() {
-						// We don't know for sure.
-						None => IsPruned::MaybePruned,
-						Some(pruning) => match pruning.have_block(hash, number) {
-							HaveBlock::No => IsPruned::Pruned,
-							HaveBlock::Yes => IsPruned::NotPruned,
-							HaveBlock::Maybe => IsPruned::MaybePruned,
-						},
-					}
-				}
-			},
-		}
+		IsPruned::NotPruned
+		//match self.mode {
+		//PruningMode::ArchiveAll => IsPruned::NotPruned,
+		//PruningMode::ArchiveCanonical | PruningMode::Constrained(_) => {
+		//if self
+		//.non_canonical
+		//.last_canonicalized_block_number()
+		//.map(|c| number > c)
+		//.unwrap_or(true)
+		//{
+		//log::info!("last_canonicalized_block_number < number");
+		//log::info!("the block is following the last canonicalized");
+		//if self.non_canonical.have_block(hash) {
+		//IsPruned::NotPruned
+		//} else {
+		//log::info!("IsPruned::Pruned - non canonical doesn't have the block");
+		//IsPruned::Pruned
+		//} else {
+		//log::info!("the block is NOT following the last canonicalized");
+		//match self.pruning.as_ref() {
+		//// We don't know for sure.
+		//None => IsPruned::MaybePruned,
+		//Some(pruning) => match pruning.have_block(hash, number) {
+		//HaveBlock::No => IsPruned::Pruned,
+		//HaveBlock::Yes => IsPruned::NotPruned,
+		//HaveBlock::Maybe => IsPruned::MaybePruned,
+		//},
+		//}
 	}
 
 	fn prune(&mut self, commit: &mut CommitSet<Key>) -> Result<(), Error<D::Error>> {
