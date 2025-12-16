@@ -30,8 +30,9 @@ use sp_runtime::{
 	Justification, Justifications, StateVersion, Storage,
 };
 use sp_state_machine::{
-	backend::AsTrieBackend, ChildStorageCollection, IndexOperation, IterArgs,
-	OffchainChangesCollection, StorageCollection, StorageIterator,
+	backend::{AsStateBackend, AsTrieBackend},
+	ChildStorageCollection, IndexOperation, IterArgs, OffchainChangesCollection, StorageCollection,
+	StorageIterator,
 };
 use sp_storage::{ChildInfo, StorageData, StorageKey};
 pub use sp_trie::MerkleValue;
@@ -562,6 +563,10 @@ pub trait Backend<Block: BlockT>: AuxStore + Send + Sync {
 	type State: StateBackend<HashingFor<Block>>
 		+ Send
 		+ AsTrieBackend<
+			HashingFor<Block>,
+			TrieBackendStorage = <Self::State as StateBackend<HashingFor<Block>>>::TrieBackendStorage,
+		>
+		+ AsStateBackend<
 			HashingFor<Block>,
 			TrieBackendStorage = <Self::State as StateBackend<HashingFor<Block>>>::TrieBackendStorage,
 		>;

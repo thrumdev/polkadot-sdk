@@ -23,17 +23,16 @@ use sc_cli::{Error, Result};
 use sc_client_api::{Backend as ClientBackend, StorageProvider, UsageProvider};
 use sc_client_db::{DbHash, DbState, DbStateBuilder};
 use sp_api::CallApiAt;
-use sp_runtime::traits::{Block as BlockT, HashingFor, Header as HeaderT};
-use sp_state_machine::{backend::AsTrieBackend, Backend};
-use sp_storage::ChildInfo;
-use sp_trie::StorageProof;
-use std::{fmt::Debug, sync::Arc, time::Instant};
 use sp_blockchain::HeaderBackend;
+use sp_runtime::traits::{Block as BlockT, HashingFor, Header as HeaderT};
+use sp_state_machine::{backend::AsTrieBackend, Backend, StorageProof};
+use sp_storage::ChildInfo;
+use std::{fmt::Debug, sync::Arc, time::Instant};
 
 use super::{cmd::StorageCmd, get_wasm_module, MAX_BATCH_SIZE_FOR_BLOCK_VALIDATION};
 use crate::shared::{new_rng, BenchRecord};
-use parking_lot::RwLock;
 use nomt::{hasher::Blake3Hasher, Nomt};
+use parking_lot::RwLock;
 
 impl StorageCmd {
 	/// Benchmarks the time it takes to read a single Storage item.
@@ -93,12 +92,8 @@ impl StorageCmd {
 		let header = client.header(best_hash)?.ok_or("Header not found")?;
 		let original_root = *header.state_root();
 
-		let (mut backend, mut recorder): (DbState<HashingFor<B>>, _) = self.create_state_backend::<B, H>(
-			original_root,
-			&storage,
-			nomt_db.clone(),
-			None
-		);
+		let (mut backend, mut recorder): (DbState<HashingFor<B>>, _) =
+			self.create_state_backend::<B, H>(original_root, &storage, nomt_db.clone(), None);
 
 		let mut read_in_batch = 0;
 		let mut on_validation_size = 0;
@@ -139,7 +134,7 @@ impl StorageCmd {
 					original_root,
 					&storage,
 					nomt_db.clone(),
-					None
+					None,
 				);
 				read_in_batch = 0;
 			}

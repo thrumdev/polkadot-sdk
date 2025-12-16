@@ -522,10 +522,11 @@ pub use sp_api_proc_macro::mock_impl_runtime_apis;
 
 /// A type that records all accessed trie nodes and generates a proof out of it.
 #[cfg(feature = "std")]
-pub type ProofRecorder<B> = sp_trie::recorder::Recorder<HashingFor<B>>;
+pub type ProofRecorder<B> = sp_state_machine::ProofRecorder<HashingFor<B>>;
 
-#[cfg(feature = "std")]
-pub type ProofRecorderIgnoredNodes<B> = sp_trie::recorder::IgnoredNodes<<B as BlockT>::Hash>;
+// NOTE: Not used within the base substrate binary.
+// #[cfg(feature = "std")]
+// pub type ProofRecorderIgnoredNodes<B> = sp_trie::recorder::IgnoredNodes<<B as BlockT>::Hash>;
 
 #[cfg(feature = "std")]
 pub type StorageChanges<Block> = sp_state_machine::StorageChanges<HashingFor<Block>>;

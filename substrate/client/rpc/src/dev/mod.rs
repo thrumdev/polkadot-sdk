@@ -107,10 +107,11 @@ where
 			.extract_proof()
 			.expect("We enabled proof recording. A proof must be available; qed");
 		let witness_len = witness.encoded_size() as u64;
-		let witness_compact_len = witness
-			.into_compact_proof::<HasherOf<Block>>(pre_root)
-			.map_err(|_| Error::WitnessCompactionFailed)?
-			.encoded_size() as u64;
-		Ok(Some(BlockStats { witness_len, witness_compact_len, block_len, num_extrinsics }))
+		todo!("handle compact proof format")
+		// let witness_compact_len = witness
+		// 	.into_compact_proof::<HasherOf<Block>>(pre_root)
+		// 	.map_err(|_| Error::WitnessCompactionFailed)?
+		// 	.encoded_size() as u64;
+		// Ok(Some(BlockStats { witness_len, witness_compact_len, block_len, num_extrinsics }))
 	}
 }

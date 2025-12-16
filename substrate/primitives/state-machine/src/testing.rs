@@ -27,6 +27,7 @@ use crate::{
 	TrieBackendBuilder,
 };
 
+use crate::StorageProof;
 use hash_db::{HashDB, Hasher};
 use sp_core::{
 	offchain::testing::TestPersistentOffchainDB,
@@ -36,7 +37,7 @@ use sp_core::{
 	},
 };
 use sp_externalities::{Extension, ExtensionStore, Extensions};
-use sp_trie::{PrefixedMemoryDB, StorageProof};
+use sp_trie::PrefixedMemoryDB;
 
 /// Simple HashMap-based Externalities impl.
 pub struct TestExternalities<H>
@@ -266,7 +267,8 @@ where
 		let outcome = sp_externalities::set_and_run_with_externalities(&mut proving_ext, execute);
 		let proof = proving_backend.extract_proof().expect("Failed to extract storage proof");
 
-		(outcome, proof)
+		// (outcome, proof)
+		todo!("handle sp_state_machine::StorageProof")
 	}
 
 	/// Execute the given closure while `self` is set as externalities.

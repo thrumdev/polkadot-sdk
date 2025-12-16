@@ -37,6 +37,7 @@ use sp_runtime::{
 	traits::{BlakeTwo256, Block as BlockT, Header as HeaderT},
 	DigestItem,
 };
+// TODO: Update and use `sp_state_machine::StorageProof`
 use sp_trie::{proof_size_extension::ProofSizeExt, recorder::IgnoredNodes, StorageProof};
 use std::{env, process::Command};
 

@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use codec::{Decode, Encode};
 use sp_core::storage::ChildInfo;
 use sp_runtime::traits;
-use sp_trie::StorageProof;
+use sp_state_machine::StorageProof;
 
 #[cfg(all(not(feature = "std"), feature = "runtime-benchmarks"))]
 use {

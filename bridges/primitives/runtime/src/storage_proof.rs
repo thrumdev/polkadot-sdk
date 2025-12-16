@@ -305,7 +305,7 @@ pub fn craft_valid_storage_proof() -> (sp_core::H256, RawStorageProof) {
 	let proof =
 		prove_read(backend, &[&b"key1"[..], &b"key2"[..], &b"key4"[..], &b"key22"[..]]).unwrap();
 
-	(root, proof.into_nodes().into_iter().collect())
+	(root, proof.encode_bytes().into_iter().map(|bytes| bytes.0).collect())
 }
 
 #[cfg(test)]

@@ -18,7 +18,10 @@
 //! Trie-based state machine backend.
 
 #[cfg(feature = "std")]
-use crate::backend::AsTrieBackend;
+use crate::{
+	backend::{AsStateBackend, AsTrieBackend},
+	state_backend::StateBackend,
+};
 use crate::{
 	backend::{BackendTransaction, IterArgs, StorageIterator},
 	trie_backend_essence::{RawIter, TrieBackendEssence, TrieBackendStorage},
@@ -547,6 +550,15 @@ impl<S: TrieBackendStorage<H>, H: Hasher, C> AsTrieBackend<H, C> for TrieBackend
 
 	fn as_trie_backend(&self) -> &TrieBackend<S, H, C> {
 		self
+	}
+}
+
+#[cfg(feature = "std")]
+impl<S: TrieBackendStorage<H>, H: Hasher, C> AsStateBackend<H> for TrieBackend<S, H, C> {
+	type TrieBackendStorage = S;
+
+	fn as_state_backend(&self) -> &StateBackend<S, H> {
+		unimplemented!()
 	}
 }
 

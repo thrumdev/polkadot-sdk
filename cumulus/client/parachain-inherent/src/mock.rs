@@ -239,7 +239,7 @@ impl<R: Send + Sync + GenerateRandomness<u64>> InherentDataProvider
 			},
 			downward_messages,
 			horizontal_messages,
-			relay_chain_state: proof,
+			relay_chain_state: proof.trie_proof().unwrap(),
 			relay_parent_descendants: Default::default(),
 			collator_peer_id: None,
 		};

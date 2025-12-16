@@ -55,9 +55,10 @@ use sp_application_crypto::{ecdsa, ed25519, sr25519, RuntimeAppPublic};
 use sp_application_crypto::{bls381, ecdsa_bls381};
 
 use sp_core::{OpaqueMetadata, RuntimeDebug};
+use sp_state_machine::StorageProof;
 use sp_trie::{
 	trie_types::{TrieDBBuilder, TrieDBMutBuilderV1},
-	PrefixedMemoryDB, StorageProof,
+	PrefixedMemoryDB,
 };
 use trie_db::{Trie, TrieMut};
 

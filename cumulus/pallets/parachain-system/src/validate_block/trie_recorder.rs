@@ -24,6 +24,7 @@ use alloc::rc::Rc;
 use codec::Encode;
 use core::cell::{RefCell, RefMut};
 use hashbrown::{HashMap, HashSet};
+// TODO: Update and use `sp_state_machine::StorageProof`
 use sp_trie::{NodeCodec, ProofSizeProvider, RandomState, StorageProof};
 use trie_db::{Hasher, RecordedForKey, TrieAccess};
 

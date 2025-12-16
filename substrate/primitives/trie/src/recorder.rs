@@ -54,6 +54,10 @@ impl<H> Default for IgnoredNodes<H> {
 }
 
 impl<H: Eq + std::hash::Hash + Clone> IgnoredNodes<H> {
+	// NOTE: test function to make sure ignore nodes are effectively never used.
+	pub fn assert_empty(&self) {
+		assert!(self.nodes.is_empty());
+	}
 	/// Initialize from the given storage proof.
 	///
 	/// So, all recorded nodes of the proof will be the ignored nodes.
@@ -162,6 +166,10 @@ impl<H: Hasher> Clone for Recorder<H> {
 }
 
 impl<H: Hasher> Recorder<H> {
+	pub fn new() -> Self {
+		Self { inner: Default::default(), encoded_size_estimation: Arc::new(0.into()) }
+	}
+
 	/// Create a new instance with the given `ingored_nodes`.
 	///
 	/// These ignored nodes are not recorded when accessed.

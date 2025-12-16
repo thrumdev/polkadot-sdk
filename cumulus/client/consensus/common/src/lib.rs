@@ -62,6 +62,7 @@ where
 }
 
 /// The result from building a collation.
+// TODO: Update and use `sp_state_machine::StorageProof`
 pub struct ParachainCandidate<B> {
 	/// The block that was built for this candidate.
 	pub block: B,

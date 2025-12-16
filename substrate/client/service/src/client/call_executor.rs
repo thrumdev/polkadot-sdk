@@ -153,24 +153,31 @@ where
 
 		match recorder {
 			Some(recorder) => {
-				let trie_state = state.as_trie_backend();
+				todo!("Update this code to properly used state backend and recorder")
+				// TODO: Here the already existing backend is wrapped using the separately
+				// created Recorder, this imply a refactor over the inner working of the
+				// nomt backend.
+				//
+				// let backend = StateBackendBuilder::wrap_with_recorder(&state)
 
-				let backend = sp_state_machine::TrieBackendBuilder::wrap(&trie_state)
-					.with_recorder(recorder.clone())
-					.build();
+				// let trie_state = state.as_trie_backend();
+				//
+				// let backend = sp_state_machine::TrieBackendBuilder::wrap(&trie_state)
+				// 	.with_recorder(recorder.clone())
+				// 	.build();
 
-				let mut state_machine = StateMachine::new(
-					&backend,
-					changes,
-					&self.executor,
-					method,
-					call_data,
-					&mut extensions,
-					&runtime_code,
-					call_context,
-				)
-				.set_parent_hash(at_hash);
-				state_machine.execute()
+				// let mut state_machine = StateMachine::new(
+				// 	&backend,
+				// 	changes,
+				// 	&self.executor,
+				// 	method,
+				// 	call_data,
+				// 	&mut extensions,
+				// 	&runtime_code,
+				// 	call_context,
+				// )
+				// .set_parent_hash(at_hash);
+				// state_machine.execute()
 			},
 			None => {
 				let mut state_machine = StateMachine::new(

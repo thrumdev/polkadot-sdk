@@ -338,91 +338,91 @@ impl StorageCmd {
 		}
 	}
 
-	/// Measures write benchmark on block validation
-	/// if `child_info` exist then it means this is a child tree key
-	fn measure_per_key_amortised_validate_block_write_cost<Block, H>(
-		&self,
-		original_root: Block::Hash,
-		storage: &Arc<dyn sp_state_machine::Storage<HashingFor<Block>>>,
-		nomt_db: Option<Arc<RwLock<Nomt<Blake3Hasher>>>>,
-		shared_trie_cache: Option<&sp_trie::cache::SharedTrieCache<HashingFor<Block>>>,
-		changes: Vec<(Vec<u8>, Vec<u8>)>,
-		maybe_child_info: Option<&ChildInfo>,
-	) -> Result<(usize, Duration)>
-	where
-		Block: BlockT<Header = H, Hash = DbHash> + Debug,
-		H: HeaderT<Hash = DbHash>,
-	{
-		let batch_size = changes.len();
-		let average_len = changes.iter().map(|(_, v)| v.len()).sum::<usize>() / batch_size;
-		let (backend, recorder) = self.create_state_backend::<Block, H>(
-			original_root,
-			storage,
-			nomt_db.clone(),
-			shared_trie_cache,
-		);
-		for (key, _) in changes.iter() {
-			let _v = backend
-				.storage(key)
-				.expect("Checked above to exist")
-				.ok_or("Value unexpectedly empty")?;
-		}
-		let storage_proof = recorder
-			.map(|r| r.drain_storage_proof())
-			.expect("Storage proof must exist for block validation");
-		let root = backend.root();
-		debug!(
-			"POV: len {:?} {:?}",
-			storage_proof.len(),
-			storage_proof.clone().encoded_compact_size::<HashingFor<Block>>(*root)
-		);
-		let params = StorageAccessParams::<Block>::new_write(
-			*root,
-			storage_proof,
-			(changes, maybe_child_info.cloned()),
-		);
+	// Measures write benchmark on block validation
+	// if `child_info` exist then it means this is a child tree key
+	// fn measure_per_key_amortised_validate_block_write_cost<Block, H>(
+	// 	&self,
+	// 	original_root: Block::Hash,
+	// 	storage: &Arc<dyn sp_state_machine::Storage<HashingFor<Block>>>,
+	// 	nomt_db: Option<Arc<RwLock<Nomt<Blake3Hasher>>>>,
+	// 	shared_trie_cache: Option<&sp_trie::cache::SharedTrieCache<HashingFor<Block>>>,
+	// 	changes: Vec<(Vec<u8>, Vec<u8>)>,
+	// 	maybe_child_info: Option<&ChildInfo>,
+	// ) -> Result<(usize, Duration)>
+	// where
+	// 	Block: BlockT<Header = H, Hash = DbHash> + Debug,
+	// 	H: HeaderT<Hash = DbHash>,
+	// {
+	// 	let batch_size = changes.len();
+	// 	let average_len = changes.iter().map(|(_, v)| v.len()).sum::<usize>() / batch_size;
+	// 	let (backend, recorder) = self.create_state_backend::<Block, H>(
+	// 		original_root,
+	// 		storage,
+	// 		nomt_db.clone(),
+	// 		shared_trie_cache,
+	// 	);
+	// 	for (key, _) in changes.iter() {
+	// 		let _v = backend
+	// 			.storage(key)
+	// 			.expect("Checked above to exist")
+	// 			.ok_or("Value unexpectedly empty")?;
+	// 	}
+	// 	let storage_proof = recorder
+	// 		.map(|r| r.drain_storage_proof())
+	// 		.expect("Storage proof must exist for block validation");
+	// 	let root = backend.root();
+	// 	debug!(
+	// 		"POV: len {:?} {:?}",
+	// 		storage_proof.len(),
+	// 		storage_proof.clone().encoded_compact_size::<HashingFor<Block>>(*root)
+	// 	);
+	// 	let params = StorageAccessParams::<Block>::new_write(
+	// 		*root,
+	// 		storage_proof,
+	// 		(changes, maybe_child_info.cloned()),
+	// 	);
 
-		let mut durations_in_nanos = Vec::new();
-		let wasm_module = get_wasm_module();
-		let mut instance = wasm_module.new_instance().expect("Failed to create wasm instance");
-		let dry_run_encoded = params.as_dry_run().encode();
-		let encoded = params.encode();
+	// 	let mut durations_in_nanos = Vec::new();
+	// 	let wasm_module = get_wasm_module();
+	// 	let mut instance = wasm_module.new_instance().expect("Failed to create wasm instance");
+	// 	let dry_run_encoded = params.as_dry_run().encode();
+	// 	let encoded = params.encode();
 
-		for i in 1..=self.params.validate_block_rounds {
-			info!(
-				"validate_block with {} keys, round {}/{}",
-				batch_size, i, self.params.validate_block_rounds
-			);
+	// 	for i in 1..=self.params.validate_block_rounds {
+	// 		info!(
+	// 			"validate_block with {} keys, round {}/{}",
+	// 			batch_size, i, self.params.validate_block_rounds
+	// 		);
 
-			// Dry run to get the time it takes without storage access
-			let dry_run_start = Instant::now();
-			instance
-				.call_export("validate_block", &dry_run_encoded)
-				.expect("Failed to call validate_block");
-			let dry_run_elapsed = dry_run_start.elapsed();
-			debug!("validate_block dry-run time {:?}", dry_run_elapsed);
+	// 		// Dry run to get the time it takes without storage access
+	// 		let dry_run_start = Instant::now();
+	// 		instance
+	// 			.call_export("validate_block", &dry_run_encoded)
+	// 			.expect("Failed to call validate_block");
+	// 		let dry_run_elapsed = dry_run_start.elapsed();
+	// 		debug!("validate_block dry-run time {:?}", dry_run_elapsed);
 
-			let start = Instant::now();
-			instance
-				.call_export("validate_block", &encoded)
-				.expect("Failed to call validate_block");
-			let elapsed = start.elapsed();
-			debug!("validate_block time {:?}", elapsed);
+	// 		let start = Instant::now();
+	// 		instance
+	// 			.call_export("validate_block", &encoded)
+	// 			.expect("Failed to call validate_block");
+	// 		let elapsed = start.elapsed();
+	// 		debug!("validate_block time {:?}", elapsed);
 
-			durations_in_nanos.push(
-				elapsed.saturating_sub(dry_run_elapsed).as_nanos() as u64 / batch_size as u64,
-			);
-		}
+	// 		durations_in_nanos.push(
+	// 			elapsed.saturating_sub(dry_run_elapsed).as_nanos() as u64 / batch_size as u64,
+	// 		);
+	// 	}
 
-		let result = (
-			average_len,
-			std::time::Duration::from_nanos(
-				durations_in_nanos.iter().sum::<u64>() / durations_in_nanos.len() as u64,
-			),
-		);
+	// 	let result = (
+	// 		average_len,
+	// 		std::time::Duration::from_nanos(
+	// 			durations_in_nanos.iter().sum::<u64>() / durations_in_nanos.len() as u64,
+	// 		),
+	// 	);
 
-		Ok(result)
-	}
+	// 	Ok(result)
+	// }
 }
 
 /// Converts a Trie transaction into a DB transaction.

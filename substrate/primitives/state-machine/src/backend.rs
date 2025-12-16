@@ -522,6 +522,13 @@ pub trait AsTrieBackend<H: Hasher, C = sp_trie::cache::LocalTrieCache<H>> {
 	fn as_trie_backend(&self) -> &TrieBackend<Self::TrieBackendStorage, H, C>;
 }
 
+#[cfg(feature = "std")]
+pub trait AsStateBackend<H: Hasher> {
+	type TrieBackendStorage: TrieBackendStorage<H>;
+
+	fn as_state_backend(&self) -> &crate::state_backend::StateBackend<Self::TrieBackendStorage, H>;
+}
+
 /// Wrapper to create a [`RuntimeCode`] from a type that implements [`Backend`].
 #[cfg(feature = "std")]
 pub struct BackendRuntimeCode<'a, B, H> {

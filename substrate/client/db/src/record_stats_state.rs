@@ -25,7 +25,7 @@ use sp_runtime::{
 	StateVersion,
 };
 use sp_state_machine::{
-	backend::{AsTrieBackend, Backend as StateBackend},
+	backend::{AsStateBackend, AsTrieBackend, Backend as StateBackend},
 	BackendTransaction, IterArgs, StorageIterator, StorageKey, StorageValue, TrieBackend,
 };
 use sp_trie::MerkleValue;
@@ -223,5 +223,19 @@ impl<S: StateBackend<HashingFor<B>> + AsTrieBackend<HashingFor<B>>, B: BlockT>
 
 	fn as_trie_backend(&self) -> &TrieBackend<Self::TrieBackendStorage, HashingFor<B>> {
 		self.state.as_trie_backend()
+	}
+}
+
+impl<
+		S: StateBackend<HashingFor<B>> + AsStateBackend<HashingFor<B>> + AsTrieBackend<HashingFor<B>>,
+		B: BlockT,
+	> AsStateBackend<HashingFor<B>> for RecordStatsState<S, B>
+{
+	type TrieBackendStorage = <S as AsStateBackend<HashingFor<B>>>::TrieBackendStorage;
+
+	fn as_state_backend(
+		&self,
+	) -> &sp_state_machine::state_backend::StateBackend<Self::TrieBackendStorage, HashingFor<B>> {
+		self.state.as_state_backend()
 	}
 }

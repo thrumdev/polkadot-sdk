@@ -74,10 +74,10 @@ use sp_runtime::{
 use sp_state_machine::{
 	prove_child_read, prove_range_read_with_child_with_size, prove_read,
 	read_range_proof_check_with_child_on_proving_backend, Backend as StateBackend,
-	ChildStorageCollection, KeyValueStates, KeyValueStorageLevel, StorageCollection,
+	ChildStorageCollection, KeyValueStates, KeyValueStorageLevel, StorageCollection, StorageProof,
 	MAX_NESTED_TRIE_DEPTH,
 };
-use sp_trie::{proof_size_extension::ProofSizeExt, CompactProof, MerkleValue, StorageProof};
+use sp_trie::{proof_size_extension::ProofSizeExt, CompactProof, MerkleValue};
 use std::{
 	collections::{HashMap, HashSet},
 	marker::PhantomData,
@@ -1213,8 +1213,9 @@ where
 		child_info: &ChildInfo,
 		keys: &mut dyn Iterator<Item = &[u8]>,
 	) -> sp_blockchain::Result<StorageProof> {
-		self.state_at(hash)
-			.and_then(|state| prove_child_read(state, child_info, keys).map_err(Into::into))
+		todo!()
+		// self.state_at(hash)
+		// 	.and_then(|state| prove_child_read(state, child_info, keys).map_err(Into::into))
 	}
 
 	fn execution_proof(
@@ -1223,7 +1224,8 @@ where
 		method: &str,
 		call_data: &[u8],
 	) -> sp_blockchain::Result<(Vec<u8>, StorageProof)> {
-		self.executor.prove_execution(hash, method, call_data)
+		todo!()
+		// self.executor.prove_execution(hash, method, call_data)
 	}
 
 	fn read_proof_collection(
@@ -1232,17 +1234,8 @@ where
 		start_key: &[Vec<u8>],
 		size_limit: usize,
 	) -> sp_blockchain::Result<(CompactProof, u32)> {
-		let state = self.state_at(hash)?;
-		// this is a read proof, using version V0 or V1 is equivalent.
-		let root = state.storage_root(std::iter::empty(), StateVersion::V0).0;
-
-		let (proof, count) = prove_range_read_with_child_with_size::<_, HashingFor<Block>>(
-			state, size_limit, start_key,
-		)?;
-		let proof = proof
-			.into_compact_proof::<HashingFor<Block>>(root)
-			.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?;
-		Ok((proof, count))
+		// NOTE: This is used only within sync, which is not part of the PoC.
+		unimplemented!()
 	}
 
 	fn storage_collection(
@@ -1251,110 +1244,8 @@ where
 		start_key: &[Vec<u8>],
 		size_limit: usize,
 	) -> sp_blockchain::Result<Vec<(KeyValueStorageLevel, bool)>> {
-		if start_key.len() > MAX_NESTED_TRIE_DEPTH {
-			return Err(Error::Backend("Invalid start key.".to_string()))
-		}
-		let state = self.state_at(hash)?;
-		let child_info = |storage_key: &Vec<u8>| -> sp_blockchain::Result<ChildInfo> {
-			let storage_key = PrefixedStorageKey::new_ref(storage_key);
-			match ChildType::from_prefixed_key(storage_key) {
-				Some((ChildType::ParentKeyId, storage_key)) =>
-					Ok(ChildInfo::new_default(storage_key)),
-				None => Err(Error::Backend("Invalid child storage key.".to_string())),
-			}
-		};
-		let mut current_child = if start_key.len() == 2 {
-			let start_key = start_key.get(0).expect("checked len");
-			if let Some(child_root) = state
-				.storage(start_key)
-				.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-			{
-				Some((child_info(start_key)?, child_root))
-			} else {
-				return Err(Error::Backend("Invalid root start key.".to_string()))
-			}
-		} else {
-			None
-		};
-		let mut current_key = start_key.last().map(Clone::clone).unwrap_or_default();
-		let mut total_size = 0;
-		let mut result = vec![(
-			KeyValueStorageLevel {
-				state_root: Vec::new(),
-				key_values: Vec::new(),
-				parent_storage_keys: Vec::new(),
-			},
-			false,
-		)];
-
-		let mut child_roots = HashSet::new();
-		loop {
-			let mut entries = Vec::new();
-			let mut complete = true;
-			let mut switch_child_key = None;
-			while let Some(next_key) = if let Some(child) = current_child.as_ref() {
-				state
-					.next_child_storage_key(&child.0, &current_key)
-					.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-			} else {
-				state
-					.next_storage_key(&current_key)
-					.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-			} {
-				let value = if let Some(child) = current_child.as_ref() {
-					state
-						.child_storage(&child.0, next_key.as_ref())
-						.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-						.unwrap_or_default()
-				} else {
-					state
-						.storage(next_key.as_ref())
-						.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?
-						.unwrap_or_default()
-				};
-				let size = value.len() + next_key.len();
-				if total_size + size > size_limit && !entries.is_empty() {
-					complete = false;
-					break
-				}
-				total_size += size;
-
-				if current_child.is_none() &&
-					sp_core::storage::well_known_keys::is_child_storage_key(next_key.as_slice()) &&
-					!child_roots.contains(value.as_slice())
-				{
-					child_roots.insert(value.clone());
-					switch_child_key = Some((next_key.clone(), value.clone()));
-					entries.push((next_key.clone(), value));
-					break
-				}
-				entries.push((next_key.clone(), value));
-				current_key = next_key;
-			}
-			if let Some((child, child_root)) = switch_child_key.take() {
-				result[0].0.key_values.extend(entries.into_iter());
-				current_child = Some((child_info(&child)?, child_root));
-				current_key = Vec::new();
-			} else if let Some((child, child_root)) = current_child.take() {
-				current_key = child.into_prefixed_storage_key().into_inner();
-				result.push((
-					KeyValueStorageLevel {
-						state_root: child_root,
-						key_values: entries,
-						parent_storage_keys: Vec::new(),
-					},
-					complete,
-				));
-				if !complete {
-					break
-				}
-			} else {
-				result[0].0.key_values.extend(entries.into_iter());
-				result[0].1 = complete;
-				break
-			}
-		}
-		Ok(result)
+		// NOTE: This is used only within sync, which is not part of the PoC.
+		unimplemented!()
 	}
 
 	fn verify_range_proof(
@@ -1363,21 +1254,8 @@ where
 		proof: CompactProof,
 		start_key: &[Vec<u8>],
 	) -> sp_blockchain::Result<(KeyValueStates, usize)> {
-		let mut db = sp_state_machine::MemoryDB::<HashingFor<Block>>::new(&[]);
-		// Compact encoding
-		sp_trie::decode_compact::<sp_state_machine::LayoutV0<HashingFor<Block>>, _, _>(
-			&mut db,
-			proof.iter_compact_encoded_nodes(),
-			Some(&root),
-		)
-		.map_err(|e| sp_blockchain::Error::from_state(Box::new(e)))?;
-		let proving_backend = sp_state_machine::TrieBackendBuilder::new(db, root).build();
-		let state = read_range_proof_check_with_child_on_proving_backend::<HashingFor<Block>>(
-			&proving_backend,
-			start_key,
-		)?;
-
-		Ok(state)
+		// NOTE: This is used only within sync, which is not part of the PoC.
+		unimplemented!()
 	}
 }
 

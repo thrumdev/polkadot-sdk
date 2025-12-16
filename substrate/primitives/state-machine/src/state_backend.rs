@@ -1,35 +1,35 @@
 use crate::{
 	backend::{Backend, StorageIterator},
 	stats::StateMachineStats,
-	trie_backend::{DefaultCache, DefaultRecorder, TrieBackend, TrieBackendBuilder},
+	trie_backend::{DefaultCache, TrieBackend, TrieBackendBuilder},
 	trie_backend_essence::TrieBackendStorage,
-	BackendTransaction, IterArgs, StorageKey, StorageValue, TrieCacheProvider, UsageInfo,
+	BackendTransaction, IterArgs, StorageKey, StorageProof, StorageValue, TrieCacheProvider,
+	UsageInfo,
 };
 
 use crate::backend::{AsTrieBackend, NomtBackendTransaction};
+use alloc::vec::Vec;
 use codec::Codec;
+use hash_db::Hasher;
 use nomt::{
 	hasher::Blake3Hasher, KeyReadWrite, KeyValueIterator, Nomt, Overlay as NomtOverlay, Session,
 	SessionParams, WitnessMode,
 };
 use parking_lot::{ArcRwLockReadGuard, Mutex, RawRwLock, RwLock};
 use sp_core::storage::{ChildInfo, StateVersion};
-use std::{cell::RefCell, collections::BTreeMap, sync::Arc};
+use sp_trie::recorder::Recorder;
+use std::{
+	cell::RefCell,
+	collections::{BTreeMap, HashMap},
+	sync::Arc,
+};
+use trie_db::RecordedForKey;
 
-use hash_db::Hasher;
-
-use alloc::vec::Vec;
-
-pub enum StateBackendBuilder<
-	S: TrieBackendStorage<H>,
-	H: Hasher,
-	C = DefaultCache<H>,
-	R = DefaultRecorder<H>,
-> {
+pub enum StateBackendBuilder<S: TrieBackendStorage<H>, H: Hasher, C = DefaultCache<H>> {
 	Trie {
 		storage: S,
 		root: H::Out,
-		recorder: Option<R>,
+		recorder: Option<Recorder<H>>,
 		cache: Option<C>,
 	},
 	Nomt {
@@ -43,6 +43,7 @@ impl<S, H> StateBackendBuilder<S, H>
 where
 	S: TrieBackendStorage<H>,
 	H: Hasher,
+	H::Out: Codec,
 {
 	/// Create a [`TrieBackend::Trie`] state backend builder.
 	pub fn new_trie(storage: S, root: H::Out) -> Self {
@@ -59,14 +60,44 @@ impl<S, H, C> StateBackendBuilder<S, H, C>
 where
 	S: TrieBackendStorage<H>,
 	H: Hasher,
+	H::Out: Codec,
+	C: TrieCacheProvider<H> + Send + Sync,
 {
+	pub fn wrap_with_recorder(backend: &StateBackend<S, H, C>) -> StateBackend<&S, H, &C> {
+		match &backend.inner {
+			InnerStateBackend::Trie(trie_backend) => {
+				let recorder_backend = TrieBackendBuilder::wrap(trie_backend)
+					.with_recorder(Default::default())
+					.build();
+				StateBackend { inner: InnerStateBackend::Trie(recorder_backend) }
+			},
+			InnerStateBackend::Nomt { recorder, session, reads, child_deltas, db } => todo!()
+				// TODO: How to deal with a reference of the session which needs to be able to create another
+				// session? 2 possibilities:
+				// 1. Each field becomes an option form where values are 'drained' and just a flag `invalidated`
+				// is kept to ensure that session is not used anymore.
+				// 2. `db` would be used to create another session and an entirely new StateBackend
+
+				// assert!(session.borrow().is_none());
+				// StateBackend {
+				// 	inner: InnerStateBackend::Nomt {
+				// 		recorder: *recorder,
+				// 		session: (,
+				// 		reads: (),
+				// 		child_deltas: (),
+				// 		db: (),
+				// 	},
+				// },
+		}
+	}
+
 	/// Create a state backend builder.
 	pub fn new_trie_with_cache(storage: S, root: H::Out, cache: C) -> Self {
 		Self::Trie { storage, root, recorder: None, cache: Some(cache) }
 	}
 
 	/// Use the given optional `recorder` for the to be configured [`TrieBackend::Trie`].
-	pub fn with_trie_optional_recorder(mut self, new_recorder: Option<DefaultRecorder<H>>) -> Self {
+	pub fn with_trie_optional_recorder(mut self, new_recorder: Option<Recorder<H>>) -> Self {
 		if let StateBackendBuilder::Trie { recorder, .. } = &mut self {
 			*recorder = new_recorder;
 		}
@@ -74,7 +105,7 @@ where
 	}
 
 	/// Use the given `recorder` for the to be configured [`TrieBackend::Trie`].
-	pub fn with_trie_recorder(mut self, new_recorder: DefaultRecorder<H>) -> Self {
+	pub fn with_trie_recorder(mut self, new_recorder: Recorder<H>) -> Self {
 		if let StateBackendBuilder::Trie { recorder, .. } = &mut self {
 			*recorder = Some(new_recorder);
 		}
@@ -118,7 +149,7 @@ where
 		}
 	}
 
-	pub fn build(self) -> StateBackend<S, H, C, DefaultRecorder<H>> {
+	pub fn build(self) -> StateBackend<S, H, C> {
 		match self {
 			StateBackendBuilder::Trie { storage, root, recorder, cache } => {
 				let trie_backend = TrieBackendBuilder::<S, H>::new(storage, root)
@@ -133,8 +164,8 @@ where
 	}
 }
 
-enum InnerStateBackend<S: TrieBackendStorage<H>, H: Hasher, C, R> {
-	Trie(TrieBackend<S, H, C, R>),
+enum InnerStateBackend<S: TrieBackendStorage<H>, H: Hasher, C> {
+	Trie(TrieBackend<S, H, C>),
 	Nomt {
 		recorder: bool,
 		session: RefCell<Option<Session<Blake3Hasher>>>,
@@ -146,16 +177,11 @@ enum InnerStateBackend<S: TrieBackendStorage<H>, H: Hasher, C, R> {
 	},
 }
 
-pub struct StateBackend<
-	S: TrieBackendStorage<H>,
-	H: Hasher,
-	C = DefaultCache<H>,
-	R = DefaultRecorder<H>,
-> {
-	inner: InnerStateBackend<S, H, C, R>,
+pub struct StateBackend<S: TrieBackendStorage<H>, H: Hasher, C = DefaultCache<H>> {
+	inner: InnerStateBackend<S, H, C>,
 }
 
-impl<S: TrieBackendStorage<H>, H: Hasher, C, R> core::fmt::Debug for StateBackend<S, H, C, R> {
+impl<S: TrieBackendStorage<H>, H: Hasher, C> core::fmt::Debug for StateBackend<S, H, C> {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		match &self.inner {
 			InnerStateBackend::Trie(_) => write!(f, "TrieBackend"),
@@ -164,12 +190,14 @@ impl<S: TrieBackendStorage<H>, H: Hasher, C, R> core::fmt::Debug for StateBacken
 	}
 }
 
-impl<S, H, C, R> StateBackend<S, H, C, R>
+impl<S, H, C> StateBackend<S, H, C>
 where
 	S: TrieBackendStorage<H>,
 	H: Hasher,
+	H::Out: Codec,
+	C: TrieCacheProvider<H> + Send + Sync,
 {
-	fn new_trie_backend(trie_backend: TrieBackend<S, H, C, R>) -> Self {
+	fn new_trie_backend(trie_backend: TrieBackend<S, H, C>) -> Self {
 		Self { inner: InnerStateBackend::Trie(trie_backend) }
 	}
 
@@ -198,22 +226,28 @@ where
 		}
 	}
 
-	fn trie(&self) -> &TrieBackend<S, H, C, R> {
+	pub fn extract_proof(mut self) -> Option<StorageProof> {
+		match self.inner {
+			InnerStateBackend::Trie(trie_backend) =>
+				trie_backend.extract_proof().map(|trie_proof| StorageProof::Trie(trie_proof)),
+			InnerStateBackend::Nomt { recorder, session, reads, child_deltas, db } => todo!(),
+		}
+	}
+
+	fn trie(&self) -> Option<&TrieBackend<S, H, C>> {
 		match &self.inner {
-			InnerStateBackend::Trie(trie_backend) => trie_backend,
-			InnerStateBackend::Nomt { .. } => unreachable!(),
+			InnerStateBackend::Trie(trie_backend) => Some(trie_backend),
+			InnerStateBackend::Nomt { .. } => None,
 		}
 	}
 }
 
-impl<S, H, C, R> StateBackend<S, H, C, R>
+impl<S, H, C> StateBackend<S, H, C>
 where
 	S: TrieBackendStorage<H>,
 	H: Hasher,
 	H::Out: Codec,
 	C: TrieCacheProvider<H> + Send + Sync,
-	// TODO: this will need to be more general
-	R: sp_trie::TrieRecorderProvider<H> + Send + Sync,
 {
 	pub fn root(&self) -> &H::Out {
 		match &self.inner {
@@ -231,17 +265,16 @@ fn child_trie_key(child_info: &ChildInfo, key: &[u8]) -> Vec<u8> {
 	full_key
 }
 
-impl<S, H, C, R> crate::backend::Backend<H> for StateBackend<S, H, C, R>
+impl<S, H, C> crate::backend::Backend<H> for StateBackend<S, H, C>
 where
 	S: TrieBackendStorage<H>,
 	H: Hasher,
 	H::Out: Codec + Ord,
 	C: TrieCacheProvider<H> + Send + Sync,
-	R: sp_trie::TrieRecorderProvider<H> + Send + Sync,
 {
 	type Error = crate::DefaultError;
 	type TrieBackendStorage = S;
-	type RawIter = RawIter<S, H, C, R>;
+	type RawIter = RawIter<S, H, C>;
 
 	fn storage(&self, key: &[u8]) -> Result<Option<StorageValue>, Self::Error> {
 		match &self.inner {
@@ -525,34 +558,52 @@ where
 	}
 }
 
-impl<S: TrieBackendStorage<H>, H: Hasher, C> AsTrieBackend<H, C> for StateBackend<S, H, C> {
+impl<S: TrieBackendStorage<H>, H: Hasher, C> AsTrieBackend<H, C> for StateBackend<S, H, C>
+where
+	C: TrieCacheProvider<H> + Send + Sync,
+	H::Out: Codec,
+{
 	type TrieBackendStorage = S;
 
 	fn as_trie_backend(&self) -> &TrieBackend<S, H, C> {
-		self.trie()
+		// NOTE: panic for now
+		self.trie().unwrap()
 	}
 }
 
-enum InnerRawIter<S, H, C, R>
+impl<S: TrieBackendStorage<H>, H: Hasher> crate::backend::AsStateBackend<H> for StateBackend<S, H> {
+	type TrieBackendStorage = S;
+
+	fn as_state_backend(&self) -> &StateBackend<S, H> {
+		&self
+	}
+}
+
+enum InnerRawIter<S, H, C>
 where
 	H: Hasher,
+	H::Out: Codec,
 {
-	Trie(crate::trie_backend_essence::RawIter<S, H, C, R>),
+	Trie(crate::trie_backend_essence::RawIter<S, H, C, Recorder<H>>),
 	Nomt(RefCell<std::iter::Peekable<KeyValueIterator>>),
 }
 
-pub struct RawIter<S, H, C, R>
+pub struct RawIter<S, H, C>
 where
 	H: Hasher,
+	H::Out: Codec,
 {
-	inner: InnerRawIter<S, H, C, R>,
+	inner: InnerRawIter<S, H, C>,
 }
 
-impl<S, H, C, R> RawIter<S, H, C, R>
+impl<S, H, C> RawIter<S, H, C>
 where
 	H: Hasher,
+	H::Out: Codec,
 {
-	pub fn new_trie_iterator(iter: crate::trie_backend_essence::RawIter<S, H, C, R>) -> Self {
+	pub fn new_trie_iterator(
+		iter: crate::trie_backend_essence::RawIter<S, H, C, Recorder<H>>,
+	) -> Self {
 		Self { inner: InnerRawIter::Trie(iter) }
 	}
 
@@ -596,24 +647,24 @@ where
 	}
 }
 
-impl<S, H, C, R> Default for RawIter<S, H, C, R>
+impl<S, H, C> Default for RawIter<S, H, C>
 where
 	H: Hasher,
+	H::Out: Codec,
 {
 	fn default() -> Self {
 		todo!("")
 	}
 }
 
-impl<S, H, C, R> StorageIterator<H> for RawIter<S, H, C, R>
+impl<S, H, C> StorageIterator<H> for RawIter<S, H, C>
 where
 	H: Hasher,
 	H::Out: Codec + Ord,
 	S: TrieBackendStorage<H>,
 	C: TrieCacheProvider<H> + Send + Sync,
-	R: sp_trie::TrieRecorderProvider<H> + Send + Sync,
 {
-	type Backend = StateBackend<S, H, C, R>;
+	type Backend = StateBackend<S, H, C>;
 	type Error = crate::DefaultError;
 
 	fn next_key(
@@ -621,7 +672,7 @@ where
 		backend: &Self::Backend,
 	) -> Option<core::result::Result<StorageKey, crate::DefaultError>> {
 		match &mut self.inner {
-			InnerRawIter::Trie(trie_iter) => trie_iter.next_key(backend.trie()),
+			InnerRawIter::Trie(trie_iter) => trie_iter.next_key(backend.trie().unwrap()),
 			InnerRawIter::Nomt(nomt_iter) =>
 				nomt_iter.borrow_mut().next().map(|(key, _val)| Ok(key)),
 		}
@@ -632,7 +683,7 @@ where
 		backend: &Self::Backend,
 	) -> Option<core::result::Result<(StorageKey, StorageValue), crate::DefaultError>> {
 		match &mut self.inner {
-			InnerRawIter::Trie(trie_iter) => trie_iter.next_pair(backend.trie()),
+			InnerRawIter::Trie(trie_iter) => trie_iter.next_pair(backend.trie().unwrap()),
 			InnerRawIter::Nomt(nomt_iter) => nomt_iter.borrow_mut().next().map(|pair| Ok(pair)),
 		}
 	}
@@ -642,5 +693,73 @@ where
 			InnerRawIter::Trie(trie_iter) => trie_iter.was_complete(),
 			InnerRawIter::Nomt(nomt_iter) => nomt_iter.borrow_mut().peek().is_some(),
 		}
+	}
+}
+
+#[derive(Clone)]
+pub enum ProofRecorder<H: Hasher> {
+	Uninit,
+	Trie { recorder: Option<sp_trie::recorder::Recorder<H>> },
+	Nomt {},
+}
+
+impl<H: Hasher> Default for ProofRecorder<H> {
+	fn default() -> Self {
+		ProofRecorder::Uninit
+	}
+}
+
+impl<H: Hasher> ProofRecorder<H> {
+	pub fn new() -> Self {
+		ProofRecorder::Uninit
+	}
+
+	pub fn with_ignored_nodes(ignored_nodes: sp_trie::recorder::IgnoredNodes<H::Out>) -> Self {
+		ignored_nodes.assert_empty();
+		ProofRecorder::Uninit
+	}
+
+	pub fn as_trie_recorder(&self, storage_root: H::Out) -> sp_trie::recorder::TrieRecorder<'_, H> {
+		match self {
+			ProofRecorder::Trie { recorder: Some(ref trie_recorder) } =>
+				trie_recorder.as_trie_recorder(storage_root),
+			_ => unreachable!(),
+		}
+	}
+
+	pub fn drain_storage_proof(self) -> StorageProof {
+		// NOTE: The external recorder needs to be able to drain the proof from the backend.
+		todo!()
+	}
+
+	pub fn to_storage_proof(&self) -> StorageProof {
+		todo!()
+	}
+
+	pub fn estimate_encoded_size(&self) -> usize {
+		todo!()
+	}
+
+	pub fn reset(&self) {
+		todo!()
+	}
+
+	pub fn recorded_keys(&self) -> HashMap<H::Out, HashMap<Arc<[u8]>, RecordedForKey>> {
+		todo!()
+	}
+	pub fn start_transaction(&self) {
+		todo!()
+	}
+	pub fn rollback_transaction(&self) -> Result<(), ()> {
+		todo!()
+	}
+	pub fn commit_transaction(&self) -> Result<(), ()> {
+		todo!()
+	}
+}
+
+impl<H: Hasher> sp_trie::ProofSizeProvider for ProofRecorder<H> {
+	fn estimate_encoded_size(&self) -> usize {
+		todo!()
 	}
 }

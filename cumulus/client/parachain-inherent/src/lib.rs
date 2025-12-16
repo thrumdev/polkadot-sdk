@@ -229,7 +229,7 @@ impl ParachainInherentDataProvider {
 			downward_messages,
 			horizontal_messages,
 			validation_data: validation_data.clone(),
-			relay_chain_state,
+			relay_chain_state: relay_chain_state.trie_proof().unwrap(),
 			relay_parent_descendants,
 			collator_peer_id,
 		})

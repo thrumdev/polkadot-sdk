@@ -88,7 +88,7 @@ use sp_runtime::{
 	Justification, Justifications, StateVersion, Storage,
 };
 use sp_state_machine::{
-	backend::{AsTrieBackend, Backend as StateBackend},
+	backend::{AsStateBackend, AsTrieBackend, Backend as StateBackend},
 	state_backend, BackendTransaction, ChildStorageCollection, DBValue, IndexOperation, IterArgs,
 	OffchainChangesCollection, StateMachineStats, StorageCollection, StorageIterator, StorageKey,
 	StorageValue, UsageInfo as StateUsageInfo,
@@ -297,6 +297,17 @@ impl<B: BlockT> AsTrieBackend<HashingFor<B>> for RefTrackingState<B> {
 		&self,
 	) -> &sp_state_machine::TrieBackend<Self::TrieBackendStorage, HashingFor<B>> {
 		&self.state.as_trie_backend()
+	}
+}
+
+impl<B: BlockT> AsStateBackend<HashingFor<B>> for RefTrackingState<B> {
+	type TrieBackendStorage =
+		<DbState<HashingFor<B>> as StateBackend<HashingFor<B>>>::TrieBackendStorage;
+
+	fn as_state_backend(
+		&self,
+	) -> &sp_state_machine::state_backend::StateBackend<Self::TrieBackendStorage, HashingFor<B>> {
+		self.state.as_state_backend()
 	}
 }
 
